@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Badminton Court Timer</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <div id="main-page">
+            <div id="enable-display" class="status-idle">
+                <div class="top-bar">
+                    <div id="settings-icon">☰</div>
+                    <div id="round-counter">Round 1 of 3</div>
+                    <div id="time">--:--:--</div>
+                </div>
+                <div class="main-timer">
+                    <div id="main-timer-display">00:00</div>
+                </div>
+                <div class="break-timer">
+                    <div id="break-timer-display">00:00</div>
+                </div>
+            </div>
+            <div class="controls">
+                <button id="start-btn">Start</button>
+                <button id="pause-btn">Pause/Resume</button>
+                <button id="reset-btn">Stop/Reset</button>
+            </div>
+            <div class="main-settings">
+                <div class="setting">
+                    <label for="game-duration">Game Duration (min):</label>
+                    <input type="number" id="game-duration" value="21">
+                </div>
+                <div class="setting">
+                    <label for="num-rounds">Number of Rounds:</label>
+                    <input type="number" id="num-rounds" value="3">
+                </div>
+            </div>
+        </div>
+
+        <div id="settings-page" class="hidden">
+            <h2>Advanced Settings</h2>
+            <div class="settings-container">
+                <div class="setting">
+                    <label for="break-time">Break Time (sec):</label>
+                    <input type="number" id="break-time" value="60">
+                </div>
+                <div class="setting">
+                    <label for="break-timer-enable">Enable Break Timer:</label>
+                    <input type="checkbox" id="break-timer-enable" checked>
+                </div>
+                <div class="setting">
+                    <label for="siren-length">Siren Length (sec):</label>
+                    <input type="number" id="siren-length" value="1">
+                </div>
+                <div class="setting">
+                    <label for="siren-pause">Siren Pause (sec):</label>
+                    <input type="number" id="siren-pause" value="1">
+                </div>
+            </div>
+            <div class="settings-controls">
+                <button id="save-settings-btn">Save & Close</button>
+            </div>
+        </div>
+    </div>
+    <script src="script.js"></script>
+</body>
+</html>
+
