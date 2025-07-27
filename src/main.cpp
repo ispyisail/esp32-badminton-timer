@@ -59,7 +59,9 @@ const unsigned long notifyInterval = 200; // Send updates every 200ms
 // --- Function Declarations ---
 // ==========================================================================
 
-void notifyClients(bool sendSettings = false);
+void sendEvent(const String& type);
+void sendStateUpdate();
+void sendSettingsUpdate();
 void handleWebSocketMessage(void *arg, uint8_t *data, size_t len);
 void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventType type, void *arg, uint8_t *data, size_t len);
 void startSiren(int blasts);
@@ -148,20 +150,28 @@ void loop() {
 
             if (currentRound >= numRounds) {
                 timerState = FINISHED;
+                sendEvent("finished");
             } else {
                 currentRound++;
                 mainTimerStart = millis();
                 breakTimerStart = millis();
                 breakSirenSounded = false;
+                
+                StaticJsonDocument<256> roundDoc;
+                roundDoc["event"] = "new_round";
+                roundDoc["gameDuration"] = gameDuration;
+                roundDoc["breakDuration"] = breakDuration;
+                roundDoc["currentRound"] = currentRound;
+                String output;
+                serializeJson(roundDoc, output);
+                ws.textAll(output);
             }
+            sendStateUpdate();
         }
     }
     
-    // Rate-limit notifications to the web UI to prevent flooding
-    if (millis() - lastNotifyTime > notifyInterval) {
-        notifyClients();
-        lastNotifyTime = millis();
-    }
+    // The main loop is now much simpler. It only handles the core timer logic
+    // and the siren. All notifications are sent via event-based functions.
 }
 
 // ==========================================================================
@@ -229,37 +239,46 @@ String getFormattedTime12Hour() {
 // --- WebSocket Communication ---
 // ==========================================================================
 
-/**
- * @brief Sends the current timer state to all connected web clients.
- * @param sendSettings If true, also sends the full settings object.
- */
-void notifyClients(bool sendSettings) {
-    StaticJsonDocument<512> doc;
-    doc["time"] = getFormattedTime12Hour();
-    doc["status"] = (timerState == RUNNING) ? "RUNNING" : ((timerState == PAUSED) ? "PAUSED" : "IDLE");
-    doc["mainTimer"] = (timerState == RUNNING || timerState == PAUSED) ? mainTimerRemaining : 0;
-    doc["breakTimer"] = (timerState == RUNNING || timerState == PAUSED) ? breakTimerRemaining : 0;
-    doc["currentRound"] = currentRound;
-    doc["numRounds"] = numRounds;
+void sendEvent(const String& type) {
+    StaticJsonDocument<256> doc;
+    doc["event"] = type;
+    String output;
+    serializeJson(doc, output);
+    ws.textAll(output);
+}
 
-    if (sendSettings) {
-        JsonObject settings = doc.createNestedObject("settings");
-        settings["gameDuration"] = gameDuration / 60000;
-        settings["breakDuration"] = breakDuration / 1000;
-        settings["numRounds"] = numRounds;
-        settings["breakTimerEnabled"] = breakTimerEnabled;
-        settings["sirenLength"] = sirenLength;
-        settings["sirenPause"] = sirenPause;
-    }
+void sendStateUpdate() {
+    StaticJsonDocument<512> doc;
+    doc["event"] = "state";
+    JsonObject state = doc.createNestedObject("state");
+    state["status"] = (timerState == RUNNING) ? "RUNNING" : ((timerState == PAUSED) ? "PAUSED" : "IDLE");
+    state["mainTimer"] = (timerState == RUNNING || timerState == PAUSED) ? mainTimerRemaining : gameDuration;
+    state["breakTimer"] = (timerState == RUNNING || timerState == PAUSED) ? breakTimerRemaining : breakDuration;
+    state["currentRound"] = currentRound;
+    state["numRounds"] = numRounds;
+    state["time"] = getFormattedTime12Hour();
 
     String output;
     serializeJson(doc, output);
     ws.textAll(output);
 }
 
-/**
- * @brief Handles incoming messages from a WebSocket client.
- */
+void sendSettingsUpdate() {
+    StaticJsonDocument<512> doc;
+    doc["event"] = "settings";
+    JsonObject settings = doc.createNestedObject("settings");
+    settings["gameDuration"] = gameDuration;
+    settings["breakDuration"] = breakDuration;
+    settings["numRounds"] = numRounds;
+    settings["breakTimerEnabled"] = breakTimerEnabled;
+    settings["sirenLength"] = sirenLength;
+    settings["sirenPause"] = sirenPause;
+
+    String output;
+    serializeJson(doc, output);
+    ws.textAll(output);
+}
+
 void handleWebSocketMessage(void *arg, uint8_t *data, size_t len) {
     StaticJsonDocument<512> doc;
     DeserializationError error = deserializeJson(doc, data, len);
@@ -279,18 +298,33 @@ void handleWebSocketMessage(void *arg, uint8_t *data, size_t len) {
         mainTimerRemaining = gameDuration;
         breakTimerRemaining = breakDuration;
         breakSirenSounded = false;
+        
+        StaticJsonDocument<256> startDoc;
+        startDoc["event"] = "start";
+        startDoc["gameDuration"] = gameDuration;
+        startDoc["breakDuration"] = breakDuration;
+        startDoc["numRounds"] = numRounds;
+        startDoc["currentRound"] = currentRound;
+        String output;
+        serializeJson(startDoc, output);
+        ws.textAll(output);
+
     } else if (action == "pause") {
         if (timerState == RUNNING) {
             timerState = PAUSED;
+            mainTimerRemaining = gameDuration > (millis() - mainTimerStart) ? gameDuration - (millis() - mainTimerStart) : 0;
+            breakTimerRemaining = breakDuration > (millis() - breakTimerStart) ? breakDuration - (millis() - breakTimerStart) : 0;
+            sendEvent("pause");
         } else if (timerState == PAUSED) {
             timerState = RUNNING;
-            // To resume, we adjust the start times to account for the time that was paused.
             mainTimerStart = millis() - (gameDuration - mainTimerRemaining);
             breakTimerStart = millis() - (breakDuration - breakTimerRemaining);
+            sendEvent("resume");
         }
     } else if (action == "reset") {
         timerState = IDLE;
         currentRound = 1;
+        sendEvent("reset");
     } else if (action == "save_settings") {
         JsonObject settings = doc["settings"];
         gameDuration = settings["gameDuration"].as<unsigned long>() * 60000;
@@ -300,8 +334,9 @@ void handleWebSocketMessage(void *arg, uint8_t *data, size_t len) {
         sirenLength = settings["sirenLength"].as<unsigned long>();
         sirenPause = settings["sirenPause"].as<unsigned long>();
         saveSettings();
+        sendSettingsUpdate(); // Notify all clients of the new settings
     }
-    notifyClients(true); // Send an immediate update after an action
+    sendStateUpdate();
 }
 
 /**
@@ -309,7 +344,8 @@ void handleWebSocketMessage(void *arg, uint8_t *data, size_t len) {
  */
 void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventType type, void *arg, uint8_t *data, size_t len) {
     if (type == WS_EVT_CONNECT) {
-        notifyClients(true); // Send settings on new connection
+        sendSettingsUpdate();
+        sendStateUpdate();
     } else if (type == WS_EVT_DATA) {
         handleWebSocketMessage(arg, data, len);
     }

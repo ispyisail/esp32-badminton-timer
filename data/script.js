@@ -26,8 +26,10 @@ let socket;
 let settings = {};
 
 // --- Client-side Timer State ---
-let serverState = { mainTimer: 0, breakTimer: 0, status: 'IDLE' };
-let lastSyncTime = 0;
+let clientTimerInterval = null;
+let mainTimerValue = 0;
+let breakTimerValue = 0;
+let isClientTimerPaused = false;
 
 // --- Function Definitions ---
 
@@ -46,19 +48,23 @@ function updateStaticUI(state) {
     breakTimerDisplay.style.display = settings.breakTimerEnabled ? 'block' : 'none';
 }
 
-function animationLoop() {
-    if (serverState.status === 'RUNNING') {
-        const elapsedSinceSync = Date.now() - lastSyncTime;
-        const mainTimerNow = serverState.mainTimer - elapsedSinceSync;
-        const breakTimerNow = serverState.breakTimer - elapsedSinceSync;
+function clientTimerLoop() {
+    if (isClientTimerPaused) return;
 
-        mainTimerDisplay.textContent = formatTime(mainTimerNow);
-        if (settings.breakTimerEnabled) {
-            breakTimerDisplay.textContent = formatTime(breakTimerNow);
-        }
+    if (mainTimerValue > 0) {
+        mainTimerValue -= 1000;
     }
-    // Continue the loop
-    requestAnimationFrame(animationLoop);
+    if (settings.breakTimerEnabled && breakTimerValue > 0) {
+        breakTimerValue -= 1000;
+    }
+
+    mainTimerDisplay.textContent = formatTime(mainTimerValue);
+    breakTimerDisplay.textContent = formatTime(breakTimerValue);
+
+    if (mainTimerValue <= 0 && breakTimerValue <= 0) {
+        // Stop the client timer, the server will send a new_round or finished event
+        clearInterval(clientTimerInterval);
+    }
 }
 
 
@@ -137,30 +143,51 @@ function connectWebSocket() {
     
     socket.onclose = () => {
         console.log('WebSocket disconnected. Reconnecting...');
+        clearInterval(clientTimerInterval);
         setTimeout(connectWebSocket, 2000);
     };
 
     socket.onmessage = (event) => {
         const data = JSON.parse(event.data);
         
-        if (data.settings) {
-            settings = data.settings;
-            gameDurationInput.value = settings.gameDuration;
-            breakTimeInput.value = settings.breakDuration;
-            numRoundsInput.value = settings.numRounds;
-            breakTimerEnableInput.checked = settings.breakTimerEnabled;
-            sirenLengthInput.value = settings.sirenLength;
-            sirenPauseInput.value = settings.sirenPause;
-        }
-
-        serverState = data;
-        lastSyncTime = Date.now();
-        updateStaticUI(data);
-
-        // If the timer is not running, make sure the display shows the final, authoritative time
-        if (serverState.status !== 'RUNNING') {
-            mainTimerDisplay.textContent = formatTime(serverState.mainTimer);
-            breakTimerDisplay.textContent = formatTime(serverState.breakTimer);
+        switch (data.event) {
+            case 'start':
+            case 'new_round':
+                mainTimerValue = data.gameDuration;
+                breakTimerValue = data.breakDuration;
+                isClientTimerPaused = false;
+                clearInterval(clientTimerInterval);
+                clientTimerInterval = setInterval(clientTimerLoop, 1000);
+                roundCounterElement.textContent = `Round ${data.currentRound} of ${data.numRounds}`;
+                break;
+            case 'pause':
+                isClientTimerPaused = true;
+                break;
+            case 'resume':
+                isClientTimerPaused = false;
+                break;
+            case 'reset':
+            case 'finished':
+                clearInterval(clientTimerInterval);
+                mainTimerDisplay.textContent = formatTime(0);
+                breakTimerDisplay.textContent = formatTime(0);
+                break;
+            case 'settings':
+                settings = data.settings;
+                gameDurationInput.value = settings.gameDuration / 60000;
+                breakTimeInput.value = settings.breakDuration / 1000;
+                numRoundsInput.value = settings.numRounds;
+                breakTimerEnableInput.checked = settings.breakTimerEnabled;
+                sirenLengthInput.value = settings.sirenLength;
+                sirenPauseInput.value = settings.sirenPause;
+                break;
+            case 'state':
+                updateStaticUI(data.state);
+                if (data.state.status !== 'RUNNING') {
+                    mainTimerDisplay.textContent = formatTime(data.state.mainTimer);
+                    breakTimerDisplay.textContent = formatTime(data.state.breakTimer);
+                }
+                break;
         }
     };
 }
@@ -168,7 +195,6 @@ function connectWebSocket() {
 // --- Main Execution ---
 if (!SIMULATION_MODE) {
     connectWebSocket();
-    requestAnimationFrame(animationLoop); // Start the animation loop
 } else {
     console.log("Running in Simulation Mode");
     initializeEventListeners();
