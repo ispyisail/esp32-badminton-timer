@@ -60,8 +60,9 @@ const unsigned long notifyInterval = 200; // Send updates every 200ms
 // ==========================================================================
 
 void sendEvent(const String& type);
-void sendStateUpdate();
-void sendSettingsUpdate();
+void sendStateUpdate(AsyncWebSocketClient *client = nullptr);
+void sendSettingsUpdate(AsyncWebSocketClient *client = nullptr);
+void sendSync(AsyncWebSocketClient *client);
 void handleWebSocketMessage(void *arg, uint8_t *data, size_t len);
 void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventType type, void *arg, uint8_t *data, size_t len);
 void startSiren(int blasts);
@@ -247,7 +248,7 @@ void sendEvent(const String& type) {
     ws.textAll(output);
 }
 
-void sendStateUpdate() {
+void sendStateUpdate(AsyncWebSocketClient *client) {
     StaticJsonDocument<512> doc;
     doc["event"] = "state";
     JsonObject state = doc.createNestedObject("state");
@@ -260,10 +261,14 @@ void sendStateUpdate() {
 
     String output;
     serializeJson(doc, output);
-    ws.textAll(output);
+    if (client) {
+        client->text(output);
+    } else {
+        ws.textAll(output);
+    }
 }
 
-void sendSettingsUpdate() {
+void sendSettingsUpdate(AsyncWebSocketClient *client) {
     StaticJsonDocument<512> doc;
     doc["event"] = "settings";
     JsonObject settings = doc.createNestedObject("settings");
@@ -276,7 +281,27 @@ void sendSettingsUpdate() {
 
     String output;
     serializeJson(doc, output);
-    ws.textAll(output);
+    if (client) {
+        client->text(output);
+    } else {
+        ws.textAll(output);
+    }
+}
+
+void sendSync(AsyncWebSocketClient *client) {
+    if (!client) return;
+
+    StaticJsonDocument<256> syncDoc;
+    syncDoc["event"] = "sync";
+    syncDoc["gameDuration"] = mainTimerRemaining;
+    syncDoc["breakDuration"] = breakTimerRemaining;
+    syncDoc["currentRound"] = currentRound;
+    syncDoc["numRounds"] = numRounds;
+    syncDoc["status"] = (timerState == PAUSED) ? "PAUSED" : "RUNNING";
+    
+    String output;
+    serializeJson(syncDoc, output);
+    client->text(output);
 }
 
 void handleWebSocketMessage(void *arg, uint8_t *data, size_t len) {
@@ -339,13 +364,14 @@ void handleWebSocketMessage(void *arg, uint8_t *data, size_t len) {
     sendStateUpdate();
 }
 
-/**
- * @brief Event handler for WebSocket connections.
- */
 void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventType type, void *arg, uint8_t *data, size_t len) {
     if (type == WS_EVT_CONNECT) {
-        sendSettingsUpdate();
-        sendStateUpdate();
+        sendSettingsUpdate(client);
+        if (timerState == RUNNING || timerState == PAUSED) {
+            sendSync(client);
+        } else {
+            sendStateUpdate(client);
+        }
     } else if (type == WS_EVT_DATA) {
         handleWebSocketMessage(arg, data, len);
     }

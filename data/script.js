@@ -160,6 +160,15 @@ function connectWebSocket() {
                 clientTimerInterval = setInterval(clientTimerLoop, 1000);
                 roundCounterElement.textContent = `Round ${data.currentRound} of ${data.numRounds}`;
                 break;
+            case 'sync':
+                mainTimerValue = data.gameDuration;
+                breakTimerValue = data.breakDuration;
+                isClientTimerPaused = (data.status === 'PAUSED');
+                clearInterval(clientTimerInterval);
+                clientTimerInterval = setInterval(clientTimerLoop, 1000);
+                roundCounterElement.textContent = `Round ${data.currentRound} of ${data.numRounds}`;
+                enableDisplay.className = (data.status === 'RUNNING' || data.status === 'PAUSED') ? 'status-active' : 'status-idle';
+                break;
             case 'pause':
                 isClientTimerPaused = true;
                 break;
