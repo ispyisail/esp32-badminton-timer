@@ -248,8 +248,8 @@ void notifyClients(bool sendSettings) {
         settings["breakDuration"] = breakDuration / 1000;
         settings["numRounds"] = numRounds;
         settings["breakTimerEnabled"] = breakTimerEnabled;
-        settings["sirenLength"] = sirenLength / 1000;
-        settings["sirenPause"] = sirenPause / 1000;
+        settings["sirenLength"] = sirenLength;
+        settings["sirenPause"] = sirenPause;
     }
 
     String output;
@@ -297,8 +297,8 @@ void handleWebSocketMessage(void *arg, uint8_t *data, size_t len) {
         breakDuration = settings["breakDuration"].as<unsigned long>() * 1000;
         numRounds = settings["numRounds"].as<unsigned int>();
         breakTimerEnabled = settings["breakTimerEnabled"].as<bool>();
-        sirenLength = settings["sirenLength"].as<unsigned long>() * 1000;
-        sirenPause = settings["sirenPause"].as<unsigned long>() * 1000;
+        sirenLength = settings["sirenLength"].as<unsigned long>();
+        sirenPause = settings["sirenPause"].as<unsigned long>();
         saveSettings();
     }
     notifyClients(true); // Send an immediate update after an action
