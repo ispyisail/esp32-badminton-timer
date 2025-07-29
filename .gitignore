@@ -4,3 +4,4 @@
 
 # Environment variables
 .env
+src/wifi_credentials.h 

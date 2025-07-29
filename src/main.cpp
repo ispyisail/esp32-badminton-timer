@@ -8,6 +8,7 @@
 #include <Preferences.h>
 #include "ESPAsyncWiFiManager.h"
 #include <ArduinoOTA.h>
+#include "wifi_credentials.h" // Import the new credentials file
 
 // ==========================================================================
 // --- Hardware & Global State ---
@@ -55,6 +56,7 @@ DNSServer dns;
 // --- Function Declarations ---
 // ==========================================================================
 
+bool connectToKnownWiFi();
 void sendEvent(const String& type);
 void sendStateUpdate(AsyncWebSocketClient *client = nullptr);
 void sendSettingsUpdate(AsyncWebSocketClient *client = nullptr);
@@ -84,19 +86,17 @@ void setup() {
 
     loadSettings();
 
-    AsyncWiFiManager wifiManager(&server, &dns);
+    if (!connectToKnownWiFi()) {
+        // If connection to a known network fails, start the captive portal
+        AsyncWiFiManager wifiManager(&server, &dns);
+        wifiManager.setAPStaticIPConfig(IPAddress(192, 168, 4, 1), IPAddress(192, 168, 4, 1), IPAddress(255, 255, 255, 0));
+        wifiManager.setConfigPortalTimeout(180); // 3 minutes
 
-    // Set a static IP for the access point to make it more stable
-    wifiManager.setAPStaticIPConfig(IPAddress(192, 168, 4, 1), IPAddress(192, 168, 4, 1), IPAddress(255, 255, 255, 0));
-    
-    // Set a timeout for the config portal
-    wifiManager.setConfigPortalTimeout(180); // 3 minutes
-
-    // Attempt to connect. If it fails, restart the ESP.
-    if (!wifiManager.autoConnect("BadmintonTimerSetup")) {
-        Serial.println("Failed to connect and hit timeout. Restarting...");
-        delay(3000);
-        ESP.restart();
+        if (!wifiManager.autoConnect("BadmintonTimerSetup")) {
+            Serial.println("Failed to connect via portal and hit timeout. Restarting...");
+            delay(3000);
+            ESP.restart();
+        }
     }
 
     Serial.println("Connected to WiFi!");
@@ -185,6 +185,40 @@ void loop() {
 // ==========================================================================
 // --- Core Functions ---
 // ==========================================================================
+
+/**
+ * @brief Attempts to connect to a list of pre-defined WiFi networks.
+ * @return True if connection is successful, false otherwise.
+ */
+bool connectToKnownWiFi() {
+    Serial.println("Trying to connect to a known WiFi network...");
+    WiFi.mode(WIFI_STA);
+
+    for (const auto& cred : known_networks) {
+        Serial.print("Connecting to: ");
+        Serial.println(cred.ssid);
+
+        // For networks with no password, the second argument can be NULL or an empty string
+        WiFi.begin(cred.ssid, (strlen(cred.password) > 0) ? cred.password : NULL);
+
+        // Wait for connection for up to 10 seconds
+        unsigned long startAttemptTime = millis();
+        while (WiFi.status() != WL_CONNECTED && millis() - startAttemptTime < 10000) {
+            delay(500);
+            Serial.print(".");
+        }
+        Serial.println();
+
+        if (WiFi.status() == WL_CONNECTED) {
+            Serial.println("Connection successful!");
+            return true;
+        } else {
+            Serial.println("Connection failed.");
+            WiFi.disconnect(); // Important to disconnect before trying the next one
+        }
+    }
+    return false;
+}
 
 /**
  * @brief Handles the non-blocking siren logic.
