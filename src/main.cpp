@@ -51,10 +51,6 @@ AsyncWebServer server(80);
 AsyncWebSocket ws("/ws");
 DNSServer dns;
 
-// Rate-limiting for WebSocket notifications
-unsigned long lastNotifyTime = 0;
-const unsigned long notifyInterval = 200; // Send updates every 200ms
-
 // ==========================================================================
 // --- Function Declarations ---
 // ==========================================================================
@@ -89,7 +85,19 @@ void setup() {
     loadSettings();
 
     AsyncWiFiManager wifiManager(&server, &dns);
-    wifiManager.autoConnect("BadmintonTimerSetup");
+
+    // Set a static IP for the access point to make it more stable
+    wifiManager.setAPStaticIPConfig(IPAddress(192, 168, 4, 1), IPAddress(192, 168, 4, 1), IPAddress(255, 255, 255, 0));
+    
+    // Set a timeout for the config portal
+    wifiManager.setConfigPortalTimeout(180); // 3 minutes
+
+    // Attempt to connect. If it fails, restart the ESP.
+    if (!wifiManager.autoConnect("BadmintonTimerSetup")) {
+        Serial.println("Failed to connect and hit timeout. Restarting...");
+        delay(3000);
+        ESP.restart();
+    }
 
     Serial.println("Connected to WiFi!");
     Serial.print("IP Address: ");
@@ -128,7 +136,6 @@ void setup() {
 
 void loop() {
     events(); // Process ezTime events for time synchronization
-    dns.processNextRequest(); // Process DNS requests for the captive portal
     ArduinoOTA.handle(); // Handle Over-the-Air update requests
     ws.cleanupClients(); // Clean up disconnected WebSocket clients
     handleSiren(); // Handle the non-blocking siren logic
