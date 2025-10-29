@@ -8,6 +8,7 @@
 #include <Preferences.h>
 #include "ESPAsyncWiFiManager.h"
 #include <ArduinoOTA.h>
+#include <map>
 #include "wifi_credentials.h" // Import the new credentials file
 
 // ==========================================================================
@@ -52,6 +53,13 @@ AsyncWebServer server(80);
 AsyncWebSocket ws("/ws");
 DNSServer dns;
 
+// WebSocket Authentication
+std::map<uint32_t, bool> authenticatedClients;
+
+// Periodic Sync
+unsigned long lastSyncBroadcast = 0;
+const unsigned long SYNC_INTERVAL = 5000; // Sync every 5 seconds
+
 // ==========================================================================
 // --- Function Declarations ---
 // ==========================================================================
@@ -61,7 +69,9 @@ void sendEvent(const String& type);
 void sendStateUpdate(AsyncWebSocketClient *client = nullptr);
 void sendSettingsUpdate(AsyncWebSocketClient *client = nullptr);
 void sendSync(AsyncWebSocketClient *client);
-void handleWebSocketMessage(void *arg, uint8_t *data, size_t len);
+void sendError(AsyncWebSocketClient *client, const String& message);
+void sendAuthRequest(AsyncWebSocketClient *client);
+void handleWebSocketMessage(void *arg, uint8_t *data, size_t len, AsyncWebSocketClient *client);
 void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventType type, void *arg, uint8_t *data, size_t len);
 void startSiren(int blasts);
 void handleSiren();
@@ -80,17 +90,46 @@ void setup() {
     digitalWrite(relayPin, LOW);
 
     if (!SPIFFS.begin(true)) {
-        Serial.println("An Error has occurred while mounting SPIFFS");
-        return;
+        Serial.println("SPIFFS mount failed! Restarting in 5 seconds...");
+        delay(5000);
+        ESP.restart();
     }
 
     loadSettings();
 
     if (!connectToKnownWiFi()) {
         // If connection to a known network fails, start the captive portal
+        // First, add captive portal detection handlers for Android/iOS/Windows
+        // These prevent devices from automatically disconnecting due to "no internet"
+
+        // Android captive portal detection
+        server.on("/generate_204", HTTP_GET, [](AsyncWebServerRequest *request){
+            request->redirect("http://192.168.4.1");
+        });
+        server.on("/gen_204", HTTP_GET, [](AsyncWebServerRequest *request){
+            request->redirect("http://192.168.4.1");
+        });
+
+        // iOS/macOS captive portal detection
+        server.on("/hotspot-detect.html", HTTP_GET, [](AsyncWebServerRequest *request){
+            request->redirect("http://192.168.4.1");
+        });
+        server.on("/library/test/success.html", HTTP_GET, [](AsyncWebServerRequest *request){
+            request->redirect("http://192.168.4.1");
+        });
+
+        // Windows connectivity check
+        server.on("/connecttest.txt", HTTP_GET, [](AsyncWebServerRequest *request){
+            request->send(200, "text/plain", "Microsoft Connect Test");
+        });
+        server.on("/ncsi.txt", HTTP_GET, [](AsyncWebServerRequest *request){
+            request->send(200, "text/plain", "Microsoft NCSI");
+        });
+
         AsyncWiFiManager wifiManager(&server, &dns);
         wifiManager.setAPStaticIPConfig(IPAddress(192, 168, 4, 1), IPAddress(192, 168, 4, 1), IPAddress(255, 255, 255, 0));
-        wifiManager.setConfigPortalTimeout(180); // 3 minutes
+        wifiManager.setConfigPortalTimeout(300); // 5 minutes (increased from 3)
+        wifiManager.setConnectRetries(5); // More retry attempts
 
         if (!wifiManager.autoConnect("BadmintonTimerSetup")) {
             Serial.println("Failed to connect via portal and hit timeout. Restarting...");
@@ -143,8 +182,15 @@ void loop() {
     // Core timer logic, only runs when the timer is active
     if (timerState == RUNNING) {
         unsigned long now = millis();
-        mainTimerRemaining = gameDuration > (now - mainTimerStart) ? gameDuration - (now - mainTimerStart) : 0;
-        breakTimerRemaining = breakDuration > (now - breakTimerStart) ? breakDuration - (now - breakTimerStart) : 0;
+
+        // Calculate elapsed time with overflow protection
+        long mainElapsed = (long)(now - mainTimerStart);
+        long breakElapsed = (long)(now - breakTimerStart);
+        if (mainElapsed < 0) mainElapsed = 0; // Handle millis() overflow (~49 days)
+        if (breakElapsed < 0) breakElapsed = 0;
+
+        mainTimerRemaining = (mainElapsed < (long)gameDuration) ? (gameDuration - mainElapsed) : 0;
+        breakTimerRemaining = (breakElapsed < (long)breakDuration) ? (breakDuration - breakElapsed) : 0;
 
         // Check if the break period has ended
         if (breakTimerEnabled && !breakSirenSounded && breakTimerRemaining == 0) {
@@ -164,7 +210,7 @@ void loop() {
                 mainTimerStart = millis();
                 breakTimerStart = millis();
                 breakSirenSounded = false;
-                
+
                 StaticJsonDocument<256> roundDoc;
                 roundDoc["event"] = "new_round";
                 roundDoc["gameDuration"] = gameDuration;
@@ -175,6 +221,12 @@ void loop() {
                 ws.textAll(output);
             }
             sendStateUpdate();
+        }
+
+        // Periodic sync broadcast to keep clients synchronized
+        if (now - lastSyncBroadcast >= SYNC_INTERVAL) {
+            sendSync(nullptr); // Send to all clients
+            lastSyncBroadcast = now;
         }
     }
     
@@ -194,7 +246,8 @@ bool connectToKnownWiFi() {
     Serial.println("Trying to connect to a known WiFi network...");
     WiFi.mode(WIFI_STA);
 
-    for (const auto& cred : known_networks) {
+    for (size_t i = 0; i < known_networks_count; i++) {
+        const WiFiCredential& cred = known_networks[i];
         Serial.print("Connecting to: ");
         Serial.println(cred.ssid);
 
@@ -330,33 +383,100 @@ void sendSettingsUpdate(AsyncWebSocketClient *client) {
 }
 
 void sendSync(AsyncWebSocketClient *client) {
-    if (!client) return;
-
-    StaticJsonDocument<256> syncDoc;
+    StaticJsonDocument<512> syncDoc;
     syncDoc["event"] = "sync";
-    syncDoc["gameDuration"] = mainTimerRemaining;
-    syncDoc["breakDuration"] = breakTimerRemaining;
+    syncDoc["mainTimerRemaining"] = mainTimerRemaining;
+    syncDoc["breakTimerRemaining"] = breakTimerRemaining;
+    syncDoc["serverMillis"] = millis(); // Server timestamp for client sync
     syncDoc["currentRound"] = currentRound;
     syncDoc["numRounds"] = numRounds;
     syncDoc["status"] = (timerState == PAUSED) ? "PAUSED" : "RUNNING";
-    
+
     String output;
     serializeJson(syncDoc, output);
+
+    if (client) {
+        client->text(output); // Send to specific client
+    } else {
+        ws.textAll(output); // Broadcast to all clients
+    }
+}
+
+void sendError(AsyncWebSocketClient *client, const String& message) {
+    if (!client) return;
+
+    StaticJsonDocument<256> doc;
+    doc["event"] = "error";
+    doc["message"] = message;
+
+    String output;
+    serializeJson(doc, output);
     client->text(output);
 }
 
-void handleWebSocketMessage(void *arg, uint8_t *data, size_t len) {
-    StaticJsonDocument<512> doc;
+void sendAuthRequest(AsyncWebSocketClient *client) {
+    if (!client) return;
+
+    StaticJsonDocument<256> doc;
+    doc["event"] = "auth_required";
+    doc["message"] = "Please enter password to control timer";
+
+    String output;
+    serializeJson(doc, output);
+    client->text(output);
+}
+
+void handleWebSocketMessage(void *arg, uint8_t *data, size_t len, AsyncWebSocketClient *client) {
+    StaticJsonDocument<1024> doc;
     DeserializationError error = deserializeJson(doc, data, len);
     if (error) {
         Serial.print(F("deserializeJson() failed: "));
         Serial.println(error.c_str());
+        sendError(client, "Invalid JSON format");
         return;
     }
 
     String action = doc["action"];
 
-    if (action == "start" && (timerState == IDLE || timerState == FINISHED)) {
+    // Check authentication for all actions except "authenticate"
+    if (action != "authenticate") {
+        if (!authenticatedClients[client->id()]) {
+            sendError(client, "Authentication required. Please enter password.");
+            return;
+        }
+    }
+
+    // Handle authentication
+    if (action == "authenticate") {
+        String password = doc["password"] | "";
+        if (password == WEB_PASSWORD) {
+            authenticatedClients[client->id()] = true;
+            StaticJsonDocument<256> authDoc;
+            authDoc["event"] = "auth_success";
+            authDoc["message"] = "Authentication successful";
+            String output;
+            serializeJson(authDoc, output);
+            client->text(output);
+
+            // Send initial state after authentication
+            sendSettingsUpdate(client);
+            if (timerState == RUNNING || timerState == PAUSED) {
+                sendSync(client);
+            } else {
+                sendStateUpdate(client);
+            }
+        } else {
+            sendError(client, "Invalid password");
+        }
+        return;
+    }
+
+    if (action == "start") {
+        if (timerState == RUNNING || timerState == PAUSED) {
+            sendError(client, "Timer already active. Reset first.");
+            return;
+        }
+        if (timerState == IDLE || timerState == FINISHED) {
         timerState = RUNNING;
         currentRound = 1;
         mainTimerStart = millis();
@@ -393,28 +513,87 @@ void handleWebSocketMessage(void *arg, uint8_t *data, size_t len) {
         sendEvent("reset");
     } else if (action == "save_settings") {
         JsonObject settings = doc["settings"];
-        gameDuration = settings["gameDuration"].as<unsigned long>() * 60000;
-        breakDuration = settings["breakDuration"].as<unsigned long>() * 1000;
-        numRounds = settings["numRounds"].as<unsigned int>();
+
+        // Validate and clamp input values
+        unsigned long gameDur = settings["gameDuration"].as<unsigned long>();
+        unsigned long breakDur = settings["breakDuration"].as<unsigned long>();
+        unsigned int rounds = settings["numRounds"].as<unsigned int>();
+        unsigned long sirenLen = settings["sirenLength"].as<unsigned long>();
+        unsigned long sirenPau = settings["sirenPause"].as<unsigned long>();
+
+        // Validation: Game duration (1-120 minutes)
+        if (gameDur < 1 || gameDur > 120) {
+            sendError(client, "Game duration must be between 1 and 120 minutes");
+            return;
+        }
+
+        // Validation: Number of rounds (1-20)
+        if (rounds < 1 || rounds > 20) {
+            sendError(client, "Number of rounds must be between 1 and 20");
+            return;
+        }
+
+        // Validation: Break duration (1-3600 seconds)
+        if (breakDur < 1 || breakDur > 3600) {
+            sendError(client, "Break duration must be between 1 and 3600 seconds");
+            return;
+        }
+
+        // Validation: Break duration can't exceed 50% of game duration
+        unsigned long gameDurInSeconds = gameDur * 60;
+        if (breakDur > gameDurInSeconds / 2) {
+            sendError(client, "Break duration cannot exceed 50% of game duration");
+            return;
+        }
+
+        // Validation: Siren settings (100-10000 ms)
+        if (sirenLen < 100 || sirenLen > 10000) {
+            sendError(client, "Siren length must be between 100 and 10000 ms");
+            return;
+        }
+        if (sirenPau < 100 || sirenPau > 10000) {
+            sendError(client, "Siren pause must be between 100 and 10000 ms");
+            return;
+        }
+
+        // All validation passed, save settings
+        gameDuration = gameDur * 60000;
+        breakDuration = breakDur * 1000;
+        numRounds = rounds;
         breakTimerEnabled = settings["breakTimerEnabled"].as<bool>();
-        sirenLength = settings["sirenLength"].as<unsigned long>();
-        sirenPause = settings["sirenPause"].as<unsigned long>();
+        sirenLength = sirenLen;
+        sirenPause = sirenPau;
         saveSettings();
         sendSettingsUpdate(); // Notify all clients of the new settings
     }
     sendStateUpdate();
 }
 
+
 void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventType type, void *arg, uint8_t *data, size_t len) {
-    if (type == WS_EVT_CONNECT) {
-        sendSettingsUpdate(client);
-        if (timerState == RUNNING || timerState == PAUSED) {
-            sendSync(client);
-        } else {
-            sendStateUpdate(client);
-        }
-    } else if (type == WS_EVT_DATA) {
-        handleWebSocketMessage(arg, data, len);
+    switch(type) {
+        case WS_EVT_CONNECT:
+            Serial.printf("WebSocket client #%u connected from %s\n", client->id(), client->remoteIP().toString().c_str());
+            authenticatedClients[client->id()] = false; // Require authentication
+            sendAuthRequest(client); // Ask for password
+            break;
+
+        case WS_EVT_DISCONNECT:
+            Serial.printf("WebSocket client #%u disconnected\n", client->id());
+            authenticatedClients.erase(client->id()); // Clean up authentication state
+            break;
+
+        case WS_EVT_DATA:
+            handleWebSocketMessage(arg, data, len, client);
+            break;
+
+        case WS_EVT_ERROR:
+            Serial.printf("WebSocket client #%u error\n", client->id());
+            break;
+
+        case WS_EVT_PONG:
+            // Heartbeat response, ignore
+            break;
     }
 }
 
@@ -423,18 +602,25 @@ void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventTyp
 // ==========================================================================
 
 void loadSettings() {
-    preferences.begin("timer", false);
-    gameDuration = preferences.getULong("gameDuration", 15 * 60 * 1000);
+    if (!preferences.begin("timer", false)) {
+        Serial.println("Failed to open preferences for reading. Using defaults.");
+        return;
+    }
+    gameDuration = preferences.getULong("gameDuration", 21 * 60 * 1000);
     breakDuration = preferences.getULong("breakDuration", 60 * 1000);
-    numRounds = preferences.getUInt("numRounds", 4);
-    breakTimerEnabled = preferences.getBool("breakEnabled", false);
+    numRounds = preferences.getUInt("numRounds", 3);
+    breakTimerEnabled = preferences.getBool("breakEnabled", true);
     sirenLength = preferences.getULong("sirenLength", 1000);
     sirenPause = preferences.getULong("sirenPause", 1000);
     preferences.end();
+    Serial.println("Settings loaded successfully");
 }
 
 void saveSettings() {
-    preferences.begin("timer", false);
+    if (!preferences.begin("timer", false)) {
+        Serial.println("Failed to open preferences for writing.");
+        return;
+    }
     preferences.putULong("gameDuration", gameDuration);
     preferences.putULong("breakDuration", breakDuration);
     preferences.putUInt("numRounds", numRounds);
@@ -442,6 +628,7 @@ void saveSettings() {
     preferences.putULong("sirenLength", sirenLength);
     preferences.putULong("sirenPause", sirenPause);
     preferences.end();
+    Serial.println("Settings saved successfully");
 }
 
 // ==========================================================================
@@ -474,6 +661,6 @@ void setupOTA() {
     });
 
   ArduinoOTA.setHostname("badminton-timer");
-  ArduinoOTA.setPassword("badminton");
+  ArduinoOTA.setPassword(OTA_PASSWORD);
   ArduinoOTA.begin();
 }

@@ -54,6 +54,28 @@ The following libraries are required and are managed automatically by PlatformIO
     platformio run --target uploadfs
     ```
 
+## Security Setup
+
+**IMPORTANT: Before first use, you MUST configure security credentials!**
+
+### Configure Passwords
+
+1. **Navigate to `src/` directory** and rename `wifi_credentials.h.example` to `wifi_credentials.h`
+
+2. **Edit `src/wifi_credentials.h`** and update:
+   - `OTA_PASSWORD` - Password for over-the-air firmware updates (default: `YourStrongOTAPassword123!`)
+   - `WEB_PASSWORD` - Password for web interface control (default: `YourWebInterfacePassword456!`)
+
+3. **IMPORTANT**: Change these from the default values to secure your timer!
+
+Example:
+```cpp
+const char* OTA_PASSWORD = "MySecureOTA2024!";
+const char* WEB_PASSWORD = "BadmintonTimer$ecure";
+```
+
+**Security Note**: The `wifi_credentials.h` file is ignored by git to protect your passwords. Never commit this file to a public repository.
+
 ## WiFi Configuration
 
 There are two methods to configure the WiFi connection for the ESP32 timer.
@@ -97,6 +119,10 @@ Once the ESP32 is connected to your local network, you can access the timer's we
 
 You can also use the IP address of the ESP32 if you know it.
 
+### First-Time Access
+
+When you first open the web interface, you will be prompted to enter a password. Enter the `WEB_PASSWORD` you configured in `src/wifi_credentials.h`. This password is required to control the timer and prevents unauthorized access.
+
 **Note on mDNS:** The `badminton-timer.local` address relies on the mDNS (Multicast DNS) protocol. Some routers or network configurations block mDNS traffic. If you are unable to access the timer using this address, you have a few options:
 
 *   **Use the IP Address:** Find the IP address of the ESP32 from your router's DHCP client list and use that to access the web interface. You may be able to configure your router to assign a static (fixed) IP address to the timer to make this easier.
@@ -108,6 +134,6 @@ You can also use the IP address of the ESP32 if you know it.
 This project supports OTA updates. Once the initial firmware is uploaded via USB, you can upload subsequent versions over the network.
 
 *   **OTA Hostname:** `badminton-timer.local`
-*   **OTA Password:** `badminton`
+*   **OTA Password:** The `OTA_PASSWORD` you configured in `src/wifi_credentials.h`
 
-**Security Note:** The OTA password is hardcoded in the `src/main.cpp` file. For a personal project on a secure home network, this is generally acceptable. However, if you plan to deploy this in a more public or untrusted environment, it is highly recommended that you change this password to something more secure.
+**Security Note:** Always use a strong, unique password for OTA updates. The default password in the example file is insecure and MUST be changed before deployment.

@@ -25,11 +25,20 @@ const SIMULATION_MODE = window.location.protocol.startsWith('file');
 let socket;
 let settings = {};
 
-// --- Client-side Timer State ---
-let clientTimerInterval = null;
-let mainTimerValue = 0;
-let breakTimerValue = 0;
+// --- Client-side Timer State (new requestAnimationFrame model) ---
+let serverMainTimerRemaining = 0;
+let serverBreakTimerRemaining = 0;
+let lastSyncTime = 0; // Local timestamp when last sync received
 let isClientTimerPaused = false;
+let animationFrameId = null;
+
+// --- Reconnection with exponential backoff ---
+let reconnectAttempts = 0;
+const MAX_RECONNECT_ATTEMPTS = 10;
+let reconnectTimeout = null;
+
+// --- Authentication state ---
+let isAuthenticated = false;
 
 // --- Function Definitions ---
 
@@ -48,25 +57,47 @@ function updateStaticUI(state) {
     breakTimerDisplay.style.display = settings.breakTimerEnabled ? 'block' : 'none';
 }
 
+// New requestAnimationFrame-based timer loop for smooth, drift-free countdown
 function clientTimerLoop() {
-    if (isClientTimerPaused) return;
-
-    if (mainTimerValue > 0) {
-        mainTimerValue -= 1000;
-    }
-    if (settings.breakTimerEnabled && breakTimerValue > 0) {
-        breakTimerValue -= 1000;
+    if (isClientTimerPaused) {
+        animationFrameId = requestAnimationFrame(clientTimerLoop);
+        return;
     }
 
-    mainTimerDisplay.textContent = formatTime(mainTimerValue);
-    breakTimerDisplay.textContent = formatTime(breakTimerValue);
+    // Calculate elapsed time since last sync
+    const localElapsed = Date.now() - lastSyncTime;
 
-    if (mainTimerValue <= 0 && breakTimerValue <= 0) {
-        // Stop the client timer, the server will send a new_round or finished event
-        clearInterval(clientTimerInterval);
+    // Calculate current timer values based on server sync + local elapsed
+    let currentMainTimer = serverMainTimerRemaining - localElapsed;
+    let currentBreakTimer = serverBreakTimerRemaining - localElapsed;
+
+    // Prevent negative values
+    if (currentMainTimer < 0) currentMainTimer = 0;
+    if (currentBreakTimer < 0) currentBreakTimer = 0;
+
+    // Update display
+    mainTimerDisplay.textContent = formatTime(currentMainTimer);
+    breakTimerDisplay.textContent = formatTime(currentBreakTimer);
+
+    // Continue animation loop if timer still running
+    if (currentMainTimer > 0 || currentBreakTimer > 0) {
+        animationFrameId = requestAnimationFrame(clientTimerLoop);
     }
 }
 
+function stopClientTimer() {
+    if (animationFrameId) {
+        cancelAnimationFrame(animationFrameId);
+        animationFrameId = null;
+    }
+}
+
+function startClientTimer() {
+    stopClientTimer();
+    if (!isClientTimerPaused) {
+        animationFrameId = requestAnimationFrame(clientTimerLoop);
+    }
+}
 
 function showSettingsPage(show) {
     mainPage.classList.toggle('hidden', show);
@@ -78,6 +109,7 @@ function sendWebSocketMessage(payload) {
         socket.send(JSON.stringify(payload));
     } else {
         console.error("WebSocket is not connected.");
+        showTemporaryMessage("Not connected to timer. Reconnecting...", "error");
     }
 }
 
@@ -112,15 +144,48 @@ function validateAndSaveAllSettings() {
     gameDurationInput.value = gameDuration;
     numRoundsInput.value = numRounds;
     breakTimeInput.value = breakDuration;
-    
+
     sendSettings();
     showSettingsPage(false);
+}
+
+function showTemporaryMessage(msg, type = "success") {
+    const banner = document.createElement('div');
+    banner.textContent = msg;
+    banner.className = `temp-message temp-message-${type}`;
+    banner.style.cssText = `position:fixed;top:20px;left:50%;transform:translateX(-50%);
+        background:${type === 'error' ? '#dc3545' : '#28a745'};color:white;padding:12px 24px;
+        border-radius:6px;z-index:10000;box-shadow:0 4px 8px rgba(0,0,0,0.3);
+        font-weight:bold;animation:fadeIn 0.3s ease-in;`;
+    document.body.appendChild(banner);
+    setTimeout(() => {
+        banner.style.animation = 'fadeOut 0.3s ease-out';
+        setTimeout(() => banner.remove(), 300);
+    }, 3000);
+}
+
+function promptPassword() {
+    const password = prompt("Please enter the timer control password:");
+    if (password) {
+        sendWebSocketMessage({ action: 'authenticate', password: password });
+    } else {
+        showTemporaryMessage("Password required to control timer", "error");
+        setTimeout(promptPassword, 2000); // Ask again
+    }
+}
+
+function updateConnectionStatus(connected) {
+    const statusDot = document.getElementById('connection-status');
+    if (statusDot) {
+        statusDot.className = connected ? 'status-connected' : 'status-disconnected';
+        statusDot.title = connected ? 'Connected' : 'Disconnected';
+    }
 }
 
 function initializeEventListeners() {
     settingsIcon.addEventListener('click', () => showSettingsPage(true));
     saveSettingsBtn.addEventListener('click', validateAndSaveAllSettings);
-    
+
     gameDurationInput.addEventListener('change', sendSettings);
     numRoundsInput.addEventListener('change', sendSettings);
     breakTimeInput.addEventListener('change', sendSettings);
@@ -134,53 +199,115 @@ function initializeEventListeners() {
 }
 
 function connectWebSocket() {
+    // Clear any existing reconnect timeout
+    if (reconnectTimeout) {
+        clearTimeout(reconnectTimeout);
+        reconnectTimeout = null;
+    }
+
+    console.log('Connecting to WebSocket...');
     socket = new WebSocket(`ws://${window.location.hostname}/ws`);
 
     socket.onopen = () => {
         console.log('WebSocket connected');
-        initializeEventListeners();
+        reconnectAttempts = 0; // Reset on successful connection
+        updateConnectionStatus(true);
+        isAuthenticated = false; // Will need to authenticate
     };
-    
+
     socket.onclose = () => {
-        console.log('WebSocket disconnected. Reconnecting...');
-        clearInterval(clientTimerInterval);
-        setTimeout(connectWebSocket, 2000);
+        console.log('WebSocket disconnected');
+        updateConnectionStatus(false);
+        stopClientTimer();
+        isAuthenticated = false;
+
+        // Exponential backoff reconnection
+        reconnectAttempts++;
+
+        if (reconnectAttempts > MAX_RECONNECT_ATTEMPTS) {
+            showTemporaryMessage("Cannot connect to timer. Please refresh the page.", "error");
+            return;
+        }
+
+        const delay = Math.min(1000 * Math.pow(2, reconnectAttempts), 30000);
+        console.log(`Reconnecting in ${delay/1000}s (attempt ${reconnectAttempts})...`);
+        showTemporaryMessage(`Reconnecting in ${Math.ceil(delay/1000)}s...`, "error");
+
+        reconnectTimeout = setTimeout(connectWebSocket, delay);
+    };
+
+    socket.onerror = (error) => {
+        console.error('WebSocket error:', error);
     };
 
     socket.onmessage = (event) => {
         const data = JSON.parse(event.data);
-        
+
         switch (data.event) {
+            case 'auth_required':
+                promptPassword();
+                break;
+
+            case 'auth_success':
+                isAuthenticated = true;
+                showTemporaryMessage("Authentication successful!", "success");
+                break;
+
+            case 'error':
+                showTemporaryMessage(data.message || "An error occurred", "error");
+                break;
+
             case 'start':
             case 'new_round':
-                mainTimerValue = data.gameDuration;
-                breakTimerValue = data.breakDuration;
+                serverMainTimerRemaining = data.gameDuration;
+                serverBreakTimerRemaining = data.breakDuration;
+                lastSyncTime = Date.now();
                 isClientTimerPaused = false;
-                clearInterval(clientTimerInterval);
-                clientTimerInterval = setInterval(clientTimerLoop, 1000);
+                startClientTimer();
                 roundCounterElement.textContent = `Round ${data.currentRound} of ${data.numRounds}`;
+                enableDisplay.className = 'status-active';
                 break;
+
             case 'sync':
-                mainTimerValue = data.gameDuration;
-                breakTimerValue = data.breakDuration;
+                // Server sync with actual remaining time
+                serverMainTimerRemaining = data.mainTimerRemaining;
+                serverBreakTimerRemaining = data.breakTimerRemaining;
+                lastSyncTime = Date.now(); // Reset sync timestamp
                 isClientTimerPaused = (data.status === 'PAUSED');
-                clearInterval(clientTimerInterval);
-                clientTimerInterval = setInterval(clientTimerLoop, 1000);
+
+                if (!isClientTimerPaused) {
+                    startClientTimer();
+                } else {
+                    stopClientTimer();
+                }
+
                 roundCounterElement.textContent = `Round ${data.currentRound} of ${data.numRounds}`;
                 enableDisplay.className = (data.status === 'RUNNING' || data.status === 'PAUSED') ? 'status-active' : 'status-idle';
                 break;
+
             case 'pause':
                 isClientTimerPaused = true;
+                stopClientTimer();
+                // Update displays to current values
+                mainTimerDisplay.textContent = formatTime(serverMainTimerRemaining - (Date.now() - lastSyncTime));
+                breakTimerDisplay.textContent = formatTime(serverBreakTimerRemaining - (Date.now() - lastSyncTime));
                 break;
+
             case 'resume':
                 isClientTimerPaused = false;
+                startClientTimer();
                 break;
+
             case 'reset':
             case 'finished':
-                clearInterval(clientTimerInterval);
+                stopClientTimer();
+                serverMainTimerRemaining = 0;
+                serverBreakTimerRemaining = 0;
                 mainTimerDisplay.textContent = formatTime(0);
                 breakTimerDisplay.textContent = formatTime(0);
+                enableDisplay.className = 'status-idle';
                 break;
+
             case 'settings':
                 settings = data.settings;
                 gameDurationInput.value = settings.gameDuration / 60000;
@@ -189,7 +316,9 @@ function connectWebSocket() {
                 breakTimerEnableInput.checked = settings.breakTimerEnabled;
                 sirenLengthInput.value = settings.sirenLength;
                 sirenPauseInput.value = settings.sirenPause;
+                breakTimerDisplay.style.display = settings.breakTimerEnabled ? 'block' : 'none';
                 break;
+
             case 'state':
                 updateStaticUI(data.state);
                 if (data.state.status !== 'RUNNING') {
@@ -203,6 +332,7 @@ function connectWebSocket() {
 
 // --- Main Execution ---
 if (!SIMULATION_MODE) {
+    initializeEventListeners();
     connectWebSocket();
 } else {
     console.log("Running in Simulation Mode");
