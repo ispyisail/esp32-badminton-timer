@@ -16,6 +16,7 @@
 #include "siren.h"
 #include "settings.h"
 #include "users.h"
+#include "schedule.h"
 
 // ==========================================================================
 // --- Hardware & Global State ---
@@ -26,6 +27,7 @@ Timer timer;
 Siren siren(RELAY_PIN);
 Settings settings;
 UserManager userManager;
+ScheduleManager scheduleManager;
 
 // Timezone
 Timezone myTZ;
@@ -97,6 +99,9 @@ void setup() {
 
     // Initialize user management
     userManager.begin();
+
+    // Initialize schedule management
+    scheduleManager.begin();
 
     if (!connectToKnownWiFi()) {
         // If connection to a known network fails, start the captive portal
@@ -186,6 +191,46 @@ void loop() {
 
     // Update siren state (non-blocking)
     siren.update();
+
+    // Check for scheduled timer starts (once per minute)
+    static unsigned long lastScheduleCheck = 0;
+    if (millis() - lastScheduleCheck >= 60000) { // Check every minute
+        lastScheduleCheck = millis();
+
+        Schedule triggeredSchedule;
+        if (scheduleManager.checkScheduleTrigger(myTZ, triggeredSchedule)) {
+            // A schedule should trigger!
+            DEBUG_PRINTF("Schedule triggered: %s for %s\n",
+                         triggeredSchedule.id.c_str(),
+                         triggeredSchedule.clubName.c_str());
+
+            // Only auto-start if timer is not already running
+            if (timer.getState() == IDLE || timer.getState() == FINISHED) {
+                // Set timer duration to schedule duration
+                timer.setGameDuration(triggeredSchedule.durationMinutes * 60000);
+                timer.setBreakDuration(0); // No break for scheduled sessions
+                timer.setNumRounds(1); // Single round
+                timer.start();
+
+                // Mark as triggered
+                scheduleManager.markTriggered(triggeredSchedule.id, scheduleManager.getCurrentWeekMinute(myTZ));
+
+                // Notify all clients
+                StaticJsonDocument<512> scheduleStartDoc;
+                scheduleStartDoc["event"] = "schedule_started";
+                scheduleStartDoc["scheduleId"] = triggeredSchedule.id;
+                scheduleStartDoc["clubName"] = triggeredSchedule.clubName;
+                scheduleStartDoc["duration"] = triggeredSchedule.durationMinutes;
+                String output;
+                serializeJson(scheduleStartDoc, output);
+                ws.textAll(output);
+
+                DEBUG_PRINTLN("Timer auto-started by schedule");
+            } else {
+                DEBUG_PRINTLN("Timer already running, skipping schedule trigger");
+            }
+        }
+    }
 
     // Update timer state
     if (timer.update()) {
@@ -615,6 +660,130 @@ void handleWebSocketMessage(void *arg, uint8_t *data, size_t len, AsyncWebSocket
         }
 
         sendSettingsUpdate();
+    } else if (action == "get_schedules") {
+        String clubFilter = doc["clubName"] | "";
+        std::vector<Schedule> schedules;
+
+        if (clientRole == ADMIN || clubFilter.isEmpty()) {
+            // Admin can see all, or no filter specified
+            schedules = scheduleManager.getAllSchedules();
+        } else {
+            // Operator can only see their club's schedules
+            schedules = scheduleManager.getSchedulesByClub(clubFilter);
+        }
+
+        StaticJsonDocument<2048> schedulesDoc;
+        schedulesDoc["event"] = "schedules_list";
+        schedulesDoc["schedulingEnabled"] = scheduleManager.isSchedulingEnabled();
+        JsonArray schedulesArray = schedulesDoc.createNestedArray("schedules");
+
+        for (const auto& sched : schedules) {
+            JsonObject schedObj = schedulesArray.createNestedObject();
+            schedObj["id"] = sched.id;
+            schedObj["clubName"] = sched.clubName;
+            schedObj["ownerUsername"] = sched.ownerUsername;
+            schedObj["dayOfWeek"] = sched.dayOfWeek;
+            schedObj["startHour"] = sched.startHour;
+            schedObj["startMinute"] = sched.startMinute;
+            schedObj["durationMinutes"] = sched.durationMinutes;
+            schedObj["enabled"] = sched.enabled;
+        }
+
+        String output;
+        serializeJson(schedulesDoc, output);
+        client->text(output);
+    } else if (action == "add_schedule") {
+        Schedule newSchedule;
+        newSchedule.id = scheduleManager.generateScheduleId();
+        newSchedule.clubName = doc["clubName"] | "";
+        newSchedule.ownerUsername = (clientRole == ADMIN) ? "admin" : authenticatedClients[client->id()] == OPERATOR ? "operator" : "";
+        newSchedule.dayOfWeek = doc["dayOfWeek"] | 0;
+        newSchedule.startHour = doc["startHour"] | 0;
+        newSchedule.startMinute = doc["startMinute"] | 0;
+        newSchedule.durationMinutes = doc["durationMinutes"] | 60;
+        newSchedule.enabled = doc["enabled"] | true;
+        newSchedule.createdAt = millis();
+
+        // Get the authenticated username for ownership
+        // (This is a simplification - in production you'd track username per client)
+        if (clientRole == OPERATOR || clientRole == ADMIN) {
+            if (scheduleManager.addSchedule(newSchedule)) {
+                StaticJsonDocument<256> successDoc;
+                successDoc["event"] = "schedule_added";
+                successDoc["scheduleId"] = newSchedule.id;
+                String output;
+                serializeJson(successDoc, output);
+                client->text(output);
+            } else {
+                sendError(client, "Failed to add schedule");
+            }
+        } else {
+            sendError(client, "Operator access required");
+        }
+    } else if (action == "update_schedule") {
+        Schedule updatedSchedule;
+        updatedSchedule.id = doc["id"] | "";
+        updatedSchedule.clubName = doc["clubName"] | "";
+        updatedSchedule.ownerUsername = doc["ownerUsername"] | "";
+        updatedSchedule.dayOfWeek = doc["dayOfWeek"] | 0;
+        updatedSchedule.startHour = doc["startHour"] | 0;
+        updatedSchedule.startMinute = doc["startMinute"] | 0;
+        updatedSchedule.durationMinutes = doc["durationMinutes"] | 60;
+        updatedSchedule.enabled = doc["enabled"] | true;
+        updatedSchedule.createdAt = doc["createdAt"] | 0;
+
+        // Check permission
+        Schedule existingSchedule;
+        if (scheduleManager.getScheduleById(updatedSchedule.id, existingSchedule)) {
+            if (scheduleManager.hasPermission(existingSchedule, "", clientRole == ADMIN)) {
+                if (scheduleManager.updateSchedule(updatedSchedule)) {
+                    StaticJsonDocument<256> successDoc;
+                    successDoc["event"] = "schedule_updated";
+                    successDoc["scheduleId"] = updatedSchedule.id;
+                    String output;
+                    serializeJson(successDoc, output);
+                    client->text(output);
+                } else {
+                    sendError(client, "Failed to update schedule");
+                }
+            } else {
+                sendError(client, "Permission denied");
+            }
+        } else {
+            sendError(client, "Schedule not found");
+        }
+    } else if (action == "delete_schedule") {
+        String scheduleId = doc["scheduleId"] | "";
+
+        Schedule existingSchedule;
+        if (scheduleManager.getScheduleById(scheduleId, existingSchedule)) {
+            if (scheduleManager.hasPermission(existingSchedule, "", clientRole == ADMIN)) {
+                if (scheduleManager.deleteSchedule(scheduleId)) {
+                    StaticJsonDocument<256> successDoc;
+                    successDoc["event"] = "schedule_deleted";
+                    successDoc["scheduleId"] = scheduleId;
+                    String output;
+                    serializeJson(successDoc, output);
+                    client->text(output);
+                } else {
+                    sendError(client, "Failed to delete schedule");
+                }
+            } else {
+                sendError(client, "Permission denied");
+            }
+        } else {
+            sendError(client, "Schedule not found");
+        }
+    } else if (action == "enable_scheduling") {
+        bool enabled = doc["enabled"] | false;
+        scheduleManager.setSchedulingEnabled(enabled);
+
+        StaticJsonDocument<256> successDoc;
+        successDoc["event"] = "scheduling_enabled";
+        successDoc["enabled"] = enabled;
+        String output;
+        serializeJson(successDoc, output);
+        ws.textAll(output); // Notify all clients
     }
     sendStateUpdate();
 }
