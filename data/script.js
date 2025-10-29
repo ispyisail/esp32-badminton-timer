@@ -40,6 +40,90 @@ let reconnectTimeout = null;
 // --- Authentication state ---
 let isAuthenticated = false;
 
+// --- Button state tracking ---
+let buttonsEnabled = true;
+
+// --- Sound effects configuration ---
+let soundEnabled = true; // Can be toggled by user
+const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+
+// --- Function Definitions ---
+
+/**
+ * @brief Play a beep sound using Web Audio API
+ * @param frequency Frequency in Hz (e.g., 440 for A4 note)
+ * @param duration Duration in milliseconds
+ */
+function playBeep(frequency = 440, duration = 100) {
+    if (!soundEnabled) return;
+
+    const oscillator = audioContext.createOscillator();
+    const gainNode = audioContext.createGain();
+
+    oscillator.connect(gainNode);
+    gainNode.connect(audioContext.destination);
+
+    oscillator.frequency.value = frequency;
+    gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+    gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + duration/1000);
+
+    oscillator.start();
+    oscillator.stop(audioContext.currentTime + duration/1000);
+}
+
+/**
+ * @brief Show loading overlay
+ * @param message Message to display
+ */
+function showLoadingOverlay(message = "Loading...") {
+    let overlay = document.getElementById('loading-overlay');
+    if (!overlay) {
+        overlay = document.createElement('div');
+        overlay.id = 'loading-overlay';
+        overlay.style.cssText = `position:fixed;top:0;left:0;width:100%;height:100%;
+            background:rgba(0,0,0,0.7);display:flex;flex-direction:column;align-items:center;
+            justify-content:center;z-index:10000;`;
+        document.body.appendChild(overlay);
+    }
+    overlay.innerHTML = `
+        <div class="spinner" style="border:8px solid #f3f3f3;border-top:8px solid #28a745;
+            border-radius:50%;width:60px;height:60px;animation:spin 1s linear infinite;"></div>
+        <p style="color:white;font-size:1.2em;margin-top:20px;">${message}</p>
+        <style>@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }</style>
+    `;
+    overlay.style.display = 'flex';
+}
+
+/**
+ * @brief Hide loading overlay
+ */
+function hideLoadingOverlay() {
+    const overlay = document.getElementById('loading-overlay');
+    if (overlay) {
+        overlay.style.display = 'none';
+    }
+}
+
+/**
+ * @brief Disable buttons temporarily
+ * @param duration Duration in milliseconds
+ */
+function disableButtonsTemporarily(duration = 500) {
+    if (!buttonsEnabled) return;
+
+    buttonsEnabled = false;
+    startBtn.disabled = true;
+    pauseBtn.disabled = true;
+    resetBtn.disabled = true;
+
+    setTimeout(() => {
+        buttonsEnabled = true;
+        startBtn.disabled = false;
+        pauseBtn.disabled = false;
+        resetBtn.disabled = false;
+    }, duration);
+}
+
 // --- Function Definitions ---
 
 function formatTime(milliseconds) {
@@ -193,9 +277,56 @@ function initializeEventListeners() {
     sirenLengthInput.addEventListener('change', sendSettings);
     sirenPauseInput.addEventListener('change', sendSettings);
 
-    startBtn.addEventListener('click', () => sendWebSocketMessage({ action: 'start' }));
-    pauseBtn.addEventListener('click', () => sendWebSocketMessage({ action: 'pause' }));
-    resetBtn.addEventListener('click', () => sendWebSocketMessage({ action: 'reset' }));
+    // Button click handlers with sound and disabled state
+    startBtn.addEventListener('click', () => {
+        playBeep(880, 100); // High beep for start
+        disableButtonsTemporarily();
+        sendWebSocketMessage({ action: 'start' });
+    });
+
+    pauseBtn.addEventListener('click', () => {
+        playBeep(660, 100); // Medium beep for pause/resume
+        disableButtonsTemporarily();
+        sendWebSocketMessage({ action: 'pause' });
+    });
+
+    resetBtn.addEventListener('click', () => {
+        playBeep(440, 150); // Low beep for reset
+        disableButtonsTemporarily();
+        sendWebSocketMessage({ action: 'reset' });
+    });
+
+    // Keyboard shortcuts
+    document.addEventListener('keydown', (e) => {
+        // Don't trigger shortcuts when typing in input fields
+        if (e.target.matches('input')) return;
+
+        switch(e.key.toLowerCase()) {
+            case ' ': // Spacebar for pause/resume
+                e.preventDefault();
+                pauseBtn.click();
+                break;
+            case 'r': // R for reset
+                e.preventDefault();
+                resetBtn.click();
+                break;
+            case 's': // S for start
+                e.preventDefault();
+                if (startBtn.disabled === false) {
+                    startBtn.click();
+                }
+                break;
+            case 'm': // M to toggle sound
+                e.preventDefault();
+                soundEnabled = !soundEnabled;
+                showTemporaryMessage(`Sound ${soundEnabled ? 'enabled' : 'disabled'}`, 'success');
+                break;
+            case '?': // ? for help
+                e.preventDefault();
+                showTemporaryMessage('Keyboard: SPACE=Pause/Resume, R=Reset, S=Start, M=Toggle Sound', 'success');
+                break;
+        }
+    });
 }
 
 function connectWebSocket() {
@@ -206,10 +337,12 @@ function connectWebSocket() {
     }
 
     console.log('Connecting to WebSocket...');
+    showLoadingOverlay('Connecting to timer...');
     socket = new WebSocket(`ws://${window.location.hostname}/ws`);
 
     socket.onopen = () => {
         console.log('WebSocket connected');
+        hideLoadingOverlay();
         reconnectAttempts = 0; // Reset on successful connection
         updateConnectionStatus(true);
         isAuthenticated = false; // Will need to authenticate

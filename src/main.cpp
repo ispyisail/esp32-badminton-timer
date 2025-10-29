@@ -9,7 +9,9 @@
 #include "ESPAsyncWiFiManager.h"
 #include <ArduinoOTA.h>
 #include <map>
-#include "wifi_credentials.h" // Import the new credentials file
+#include "esp_task_wdt.h"
+#include "wifi_credentials.h"
+#include "config.h"
 
 // ==========================================================================
 // --- Hardware & Global State ---
@@ -78,6 +80,8 @@ void handleSiren();
 void loadSettings();
 void saveSettings();
 void setupOTA();
+void setupWatchdog();
+void runSelfTest();
 String getFormattedTime12Hour();
 
 // ==========================================================================
@@ -85,13 +89,28 @@ String getFormattedTime12Hour();
 // ==========================================================================
 
 void setup() {
-    Serial.begin(115200);
+    Serial.begin(SERIAL_BAUD_RATE);
+    DEBUG_PRINTLN("\n\n=================================");
+    DEBUG_PRINTF("ESP32 Badminton Timer v%s\n", FIRMWARE_VERSION);
+    DEBUG_PRINTF("Build: %s %s\n", BUILD_DATE, BUILD_TIME);
+    DEBUG_PRINTLN("=================================\n");
+
     pinMode(relayPin, OUTPUT);
     digitalWrite(relayPin, LOW);
 
+    // Configure watchdog timer
+    if (ENABLE_WATCHDOG) {
+        setupWatchdog();
+    }
+
+    // Run self-test
+    if (ENABLE_SELF_TEST) {
+        runSelfTest();
+    }
+
     if (!SPIFFS.begin(true)) {
-        Serial.println("SPIFFS mount failed! Restarting in 5 seconds...");
-        delay(5000);
+        DEBUG_PRINTLN("SPIFFS mount failed! Restarting in 5 seconds...");
+        delay(SPIFFS_RESTART_DELAY_MS);
         ESP.restart();
     }
 
@@ -174,6 +193,11 @@ void setup() {
 // ==========================================================================
 
 void loop() {
+    // Reset watchdog timer
+    if (ENABLE_WATCHDOG) {
+        esp_task_wdt_reset();
+    }
+
     events(); // Process ezTime events for time synchronization
     ArduinoOTA.handle(); // Handle Over-the-Air update requests
     ws.cleanupClients(); // Clean up disconnected WebSocket clients
@@ -204,7 +228,9 @@ void loop() {
 
             if (currentRound >= numRounds) {
                 timerState = FINISHED;
+                startSiren(3); // Match completion fanfare: 3 blasts
                 sendEvent("finished");
+                DEBUG_PRINTLN("Match completed! All rounds finished.");
             } else {
                 currentRound++;
                 mainTimerStart = millis();
@@ -643,24 +669,101 @@ void setupOTA() {
         type = "sketch";
       else // U_SPIFFS
         type = "filesystem";
-      Serial.println("Start updating " + type);
+      DEBUG_PRINTLN("Start updating " + type);
     })
     .onEnd([]() {
-      Serial.println("\nEnd");
+      DEBUG_PRINTLN("\nOTA Update complete");
     })
     .onProgress([](unsigned int progress, unsigned int total) {
-      Serial.printf("Progress: %u%%\r", (progress / (total / 100)));
+      DEBUG_PRINTF("Progress: %u%%\r", (progress / (total / 100)));
     })
     .onError([](ota_error_t error) {
-      Serial.printf("Error[%u]: ", error);
-      if (error == OTA_AUTH_ERROR) Serial.println("Auth Failed");
-      else if (error == OTA_BEGIN_ERROR) Serial.println("Begin Failed");
-      else if (error == OTA_CONNECT_ERROR) Serial.println("Connect Failed");
-      else if (error == OTA_RECEIVE_ERROR) Serial.println("Receive Failed");
-      else if (error == OTA_END_ERROR) Serial.println("End Failed");
+      DEBUG_PRINTF("Error[%u]: ", error);
+      if (error == OTA_AUTH_ERROR) DEBUG_PRINTLN("Auth Failed");
+      else if (error == OTA_BEGIN_ERROR) DEBUG_PRINTLN("Begin Failed");
+      else if (error == OTA_CONNECT_ERROR) DEBUG_PRINTLN("Connect Failed");
+      else if (error == OTA_RECEIVE_ERROR) DEBUG_PRINTLN("Receive Failed");
+      else if (error == OTA_END_ERROR) DEBUG_PRINTLN("End Failed");
     });
 
-  ArduinoOTA.setHostname("badminton-timer");
+  ArduinoOTA.setHostname(MDNS_HOSTNAME);
   ArduinoOTA.setPassword(OTA_PASSWORD);
   ArduinoOTA.begin();
+  DEBUG_PRINTLN("OTA updates enabled");
+}
+
+// ==========================================================================
+// --- Watchdog Timer ---
+// ==========================================================================
+
+/**
+ * @brief Configure and enable the watchdog timer
+ *
+ * The watchdog timer will reset the ESP32 if the main loop hangs for more than
+ * the configured timeout period. This provides automatic recovery from crashes.
+ */
+void setupWatchdog() {
+    esp_task_wdt_init(WATCHDOG_TIMEOUT_SEC, true); // Enable panic so ESP32 restarts
+    esp_task_wdt_add(NULL); // Add current thread to WDT watch
+    DEBUG_PRINTF("Watchdog timer enabled (%lu second timeout)\n", WATCHDOG_TIMEOUT_SEC);
+}
+
+// ==========================================================================
+// --- Self-Test ---
+// ==========================================================================
+
+/**
+ * @brief Run self-test on boot to verify hardware functionality
+ *
+ * Tests:
+ * - SPIFFS filesystem
+ * - Preferences (NVS)
+ * - Relay operation
+ */
+void runSelfTest() {
+    DEBUG_PRINTLN("Running self-test...");
+    bool allTestsPassed = true;
+
+    // Test 1: SPIFFS
+    DEBUG_PRINT("  Testing SPIFFS... ");
+    if (SPIFFS.begin(true)) {
+        DEBUG_PRINTLN("PASS");
+    } else {
+        DEBUG_PRINTLN("FAIL");
+        allTestsPassed = false;
+    }
+
+    // Test 2: Preferences
+    DEBUG_PRINT("  Testing Preferences... ");
+    Preferences prefs;
+    if (prefs.begin("test", false)) {
+        prefs.putString("test", "ok");
+        String result = prefs.getString("test", "");
+        prefs.end();
+        prefs.begin("test", false);
+        prefs.remove("test");
+        prefs.end();
+        if (result == "ok") {
+            DEBUG_PRINTLN("PASS");
+        } else {
+            DEBUG_PRINTLN("FAIL");
+            allTestsPassed = false;
+        }
+    } else {
+        DEBUG_PRINTLN("FAIL");
+        allTestsPassed = false;
+    }
+
+    // Test 3: Relay
+    DEBUG_PRINT("  Testing Relay... ");
+    digitalWrite(relayPin, HIGH);
+    delay(100);
+    digitalWrite(relayPin, LOW);
+    DEBUG_PRINTLN("PASS");
+
+    if (allTestsPassed) {
+        DEBUG_PRINTLN("Self-test PASSED\n");
+    } else {
+        DEBUG_PRINTLN("Self-test FAILED - Some components may not function correctly\n");
+    }
 }

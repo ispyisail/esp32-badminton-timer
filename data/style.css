@@ -129,6 +129,17 @@ body {
     background-color: #0056b3;
 }
 
+.controls button:disabled {
+    background-color: #6c757d;
+    cursor: not-allowed;
+    opacity: 0.6;
+}
+
+.controls button:active:not(:disabled) {
+    transform: scale(0.98);
+    transition: transform 0.1s;
+}
+
 #settings-page {
     padding: 20px;
 }
