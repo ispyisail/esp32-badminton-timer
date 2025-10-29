@@ -2,6 +2,7 @@
 const mainPage = document.getElementById('main-page');
 const settingsPage = document.getElementById('settings-page');
 const userManagementPage = document.getElementById('user-management-page');
+const schedulePage = document.getElementById('schedule-page');
 const loginModal = document.getElementById('login-modal');
 const enableDisplay = document.getElementById('enable-display');
 const timeElement = document.getElementById('time');
@@ -12,6 +13,7 @@ const startBtn = document.getElementById('start-btn');
 const pauseBtn = document.getElementById('pause-btn');
 const resetBtn = document.getElementById('reset-btn');
 const settingsIcon = document.getElementById('settings-icon');
+const scheduleIcon = document.getElementById('schedule-icon');
 const userIcon = document.getElementById('user-icon');
 const saveSettingsBtn = document.getElementById('save-settings-btn');
 
@@ -33,6 +35,22 @@ const changeNewPasswordInput = document.getElementById('change-new-password');
 const changePasswordBtn = document.getElementById('change-password-btn');
 const factoryResetBtn = document.getElementById('factory-reset-btn');
 const closeUserManagementBtn = document.getElementById('close-user-management-btn');
+
+// --- Schedule elements ---
+const schedulingEnabledToggle = document.getElementById('scheduling-enabled-toggle');
+const scheduleClubFilter = document.getElementById('schedule-club-filter');
+const loadSchedulesBtn = document.getElementById('load-schedules-btn');
+const calendarBody = document.getElementById('calendar-body');
+const scheduleClubName = document.getElementById('schedule-club-name');
+const scheduleDay = document.getElementById('schedule-day');
+const scheduleHour = document.getElementById('schedule-hour');
+const scheduleMinute = document.getElementById('schedule-minute');
+const scheduleDuration = document.getElementById('schedule-duration');
+const scheduleEnabled = document.getElementById('schedule-enabled');
+const saveScheduleBtn = document.getElementById('save-schedule-btn');
+const cancelScheduleBtn = document.getElementById('cancel-schedule-btn');
+const schedulesList = document.getElementById('schedules-list');
+const closeScheduleBtn = document.getElementById('close-schedule-btn');
 
 // --- Settings inputs ---
 const gameDurationInput = document.getElementById('game-duration');
@@ -62,6 +80,11 @@ let reconnectTimeout = null;
 // --- Authentication state ---
 let userRole = 'viewer'; // 'viewer', 'operator', 'admin'
 let currentUsername = 'Viewer';
+
+// --- Schedule state ---
+let schedules = [];
+let editingScheduleId = null;
+let schedulingEnabled = false;
 
 // --- Button state tracking ---
 let buttonsEnabled = true;
@@ -207,6 +230,42 @@ function startClientTimer() {
 function showSettingsPage(show) {
     mainPage.classList.toggle('hidden', show);
     settingsPage.classList.toggle('hidden', !show);
+    userManagementPage.classList.add('hidden');
+    schedulePage.classList.add('hidden');
+}
+
+function showUserManagementPage(show) {
+    mainPage.classList.toggle('hidden', show);
+    settingsPage.classList.add('hidden');
+    userManagementPage.classList.toggle('hidden', !show);
+    schedulePage.classList.add('hidden');
+}
+
+function showSchedulePage(show) {
+    mainPage.classList.toggle('hidden', show);
+    settingsPage.classList.add('hidden');
+    userManagementPage.classList.add('hidden');
+    schedulePage.classList.toggle('hidden', !show);
+
+    if (show) {
+        loadSchedules();
+    }
+}
+
+function updateUIForRole() {
+    // Update body class for CSS-based role visibility
+    document.body.className = `role-${userRole}`;
+
+    // Update current user info
+    if (currentUserInfo) {
+        let roleDisplay = userRole.charAt(0).toUpperCase() + userRole.slice(1);
+        let badgeClass = userRole === 'admin' ? 'badge-danger' :
+                        userRole === 'operator' ? 'badge-warning' : 'badge-secondary';
+        currentUserInfo.innerHTML = `
+            <strong>${currentUsername}</strong>
+            <span class="badge ${badgeClass}">${roleDisplay}</span>
+        `;
+    }
 }
 
 function sendWebSocketMessage(payload) {
@@ -279,6 +338,328 @@ function promptPassword() {
     }
 }
 
+// --- User Management Functions ---
+
+function loadOperators() {
+    sendWebSocketMessage({ action: 'get_operators' });
+}
+
+function renderOperatorsList(operators) {
+    if (!operatorsList) return;
+
+    if (operators.length === 0) {
+        operatorsList.innerHTML = '<p class="text-secondary">No operators configured</p>';
+        return;
+    }
+
+    let html = '';
+    operators.forEach(username => {
+        html += `
+            <div class="operator-item">
+                <span class="operator-username">${username}</span>
+                <button class="btn btn-danger btn-small" onclick="removeOperator('${username}')">Remove</button>
+            </div>
+        `;
+    });
+
+    operatorsList.innerHTML = html;
+}
+
+function removeOperator(username) {
+    if (confirm(`Remove operator "${username}"?`)) {
+        sendWebSocketMessage({
+            action: 'remove_operator',
+            username: username
+        });
+    }
+}
+
+// --- Schedule Management Functions ---
+
+function loadSchedules() {
+    sendWebSocketMessage({ action: 'get_schedules' });
+}
+
+function renderCalendar() {
+    if (!calendarBody) return;
+
+    // Clear existing calendar
+    calendarBody.innerHTML = '';
+
+    // Generate hourly rows (6 AM to 11 PM)
+    const startHour = 6;
+    const endHour = 23;
+
+    for (let hour = startHour; hour <= endHour; hour++) {
+        const row = document.createElement('div');
+        row.className = 'calendar-row';
+        row.style.display = 'contents'; // Make children part of parent grid
+
+        // Time cell
+        const timeCell = document.createElement('div');
+        timeCell.className = 'time-cell';
+        timeCell.textContent = `${hour.toString().padStart(2, '0')}:00`;
+        row.appendChild(timeCell);
+
+        // Day cells (Sunday = 0 to Saturday = 6)
+        for (let day = 0; day < 7; day++) {
+            const dayCell = document.createElement('div');
+            dayCell.className = 'calendar-cell';
+            dayCell.dataset.day = day;
+            dayCell.dataset.hour = hour;
+
+            // Find schedules for this day/hour
+            const cellSchedules = schedules.filter(s => {
+                return s.dayOfWeek === day && s.startHour === hour;
+            });
+
+            // Render schedule blocks in this cell
+            cellSchedules.forEach(schedule => {
+                const block = document.createElement('div');
+                block.className = 'schedule-block';
+                if (!schedule.enabled) {
+                    block.classList.add('schedule-disabled');
+                }
+                block.textContent = `${schedule.clubName} (${schedule.durationMinutes}m)`;
+                block.title = `${schedule.clubName}\n${getDayName(schedule.dayOfWeek)} ${schedule.startHour.toString().padStart(2, '0')}:${schedule.startMinute.toString().padStart(2, '0')}\n${schedule.durationMinutes} minutes\nOwner: ${schedule.ownerUsername}`;
+                block.dataset.scheduleId = schedule.id;
+                block.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    editSchedule(schedule.id);
+                });
+                dayCell.appendChild(block);
+            });
+
+            // Allow clicking empty cells to add new schedule
+            if (userRole !== 'viewer') {
+                dayCell.addEventListener('click', () => {
+                    quickAddSchedule(day, hour);
+                });
+            }
+
+            row.appendChild(dayCell);
+        }
+
+        calendarBody.appendChild(row);
+    }
+}
+
+function renderScheduleList() {
+    if (!schedulesList) return;
+
+    // Filter schedules by club if filter is active
+    let filteredSchedules = schedules;
+    if (scheduleClubFilter && scheduleClubFilter.value.trim()) {
+        const filterText = scheduleClubFilter.value.trim().toLowerCase();
+        filteredSchedules = schedules.filter(s =>
+            s.clubName.toLowerCase().includes(filterText)
+        );
+    }
+
+    if (filteredSchedules.length === 0) {
+        schedulesList.innerHTML = '<p class="text-secondary">No schedules found</p>';
+        return;
+    }
+
+    // Sort by day, then by time
+    filteredSchedules.sort((a, b) => {
+        if (a.dayOfWeek !== b.dayOfWeek) return a.dayOfWeek - b.dayOfWeek;
+        if (a.startHour !== b.startHour) return a.startHour - b.startHour;
+        return a.startMinute - b.startMinute;
+    });
+
+    let html = '';
+    filteredSchedules.forEach(schedule => {
+        const timeStr = `${schedule.startHour.toString().padStart(2, '0')}:${schedule.startMinute.toString().padStart(2, '0')}`;
+        const enabledBadge = schedule.enabled
+            ? '<span class="badge badge-success">Enabled</span>'
+            : '<span class="badge badge-secondary">Disabled</span>';
+
+        html += `
+            <div class="schedule-item" data-schedule-id="${schedule.id}">
+                <div class="schedule-item-header">
+                    <h4>${schedule.clubName}</h4>
+                    ${enabledBadge}
+                </div>
+                <div class="schedule-item-details">
+                    <span><strong>${getDayName(schedule.dayOfWeek)}</strong> at ${timeStr}</span>
+                    <span>${schedule.durationMinutes} minutes</span>
+                    <span>Owner: ${schedule.ownerUsername}</span>
+                </div>
+                <div class="schedule-item-actions">
+                    <button class="btn btn-secondary btn-small" onclick="editSchedule('${schedule.id}')">Edit</button>
+                    <button class="btn btn-danger btn-small" onclick="deleteSchedule('${schedule.id}')">Delete</button>
+                </div>
+            </div>
+        `;
+    });
+
+    schedulesList.innerHTML = html;
+}
+
+function getDayName(day) {
+    const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    return days[day] || 'Unknown';
+}
+
+function quickAddSchedule(day, hour) {
+    // Pre-fill form with clicked day/hour
+    if (scheduleDay) scheduleDay.value = day;
+    if (scheduleHour) scheduleHour.value = hour;
+    if (scheduleMinute) scheduleMinute.value = 0;
+    if (scheduleDuration) scheduleDuration.value = 60;
+    if (scheduleEnabled) scheduleEnabled.checked = true;
+    if (scheduleClubName) scheduleClubName.value = '';
+
+    editingScheduleId = null;
+
+    // Scroll to form
+    const scheduleForm = document.querySelector('#schedule-page .settings-card');
+    if (scheduleForm) {
+        scheduleForm.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        if (scheduleClubName) scheduleClubName.focus();
+    }
+}
+
+function editSchedule(scheduleId) {
+    const schedule = schedules.find(s => s.id === scheduleId);
+    if (!schedule) return;
+
+    // Check permission
+    if (userRole === 'viewer') {
+        showTemporaryMessage('You need to be logged in to edit schedules', 'error');
+        return;
+    }
+
+    if (userRole === 'operator' && schedule.ownerUsername !== currentUsername) {
+        showTemporaryMessage('You can only edit schedules you created', 'error');
+        return;
+    }
+
+    // Fill form
+    if (scheduleClubName) scheduleClubName.value = schedule.clubName;
+    if (scheduleDay) scheduleDay.value = schedule.dayOfWeek;
+    if (scheduleHour) scheduleHour.value = schedule.startHour;
+    if (scheduleMinute) scheduleMinute.value = schedule.startMinute;
+    if (scheduleDuration) scheduleDuration.value = schedule.durationMinutes;
+    if (scheduleEnabled) scheduleEnabled.checked = schedule.enabled;
+
+    editingScheduleId = scheduleId;
+
+    // Update form title
+    const formTitle = document.getElementById('schedule-form-title');
+    if (formTitle) {
+        formTitle.textContent = 'Edit Schedule';
+    }
+
+    // Scroll to form
+    const scheduleForm = document.querySelector('#schedule-page .settings-card');
+    if (scheduleForm) {
+        scheduleForm.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+}
+
+function deleteSchedule(scheduleId) {
+    const schedule = schedules.find(s => s.id === scheduleId);
+    if (!schedule) return;
+
+    // Check permission
+    if (userRole === 'viewer') {
+        showTemporaryMessage('You need to be logged in to delete schedules', 'error');
+        return;
+    }
+
+    if (userRole === 'operator' && schedule.ownerUsername !== currentUsername) {
+        showTemporaryMessage('You can only delete schedules you created', 'error');
+        return;
+    }
+
+    if (confirm(`Delete schedule for ${schedule.clubName} on ${getDayName(schedule.dayOfWeek)}?`)) {
+        sendWebSocketMessage({
+            action: 'delete_schedule',
+            id: scheduleId
+        });
+    }
+}
+
+function saveSchedule() {
+    // Validate inputs
+    const clubName = scheduleClubName?.value.trim();
+    const day = parseInt(scheduleDay?.value);
+    const hour = parseInt(scheduleHour?.value);
+    const minute = parseInt(scheduleMinute?.value);
+    const duration = parseInt(scheduleDuration?.value);
+    const enabled = scheduleEnabled?.checked;
+
+    if (!clubName) {
+        showTemporaryMessage('Please enter a club name', 'error');
+        return;
+    }
+
+    if (isNaN(day) || day < 0 || day > 6) {
+        showTemporaryMessage('Please select a valid day', 'error');
+        return;
+    }
+
+    if (isNaN(hour) || hour < 0 || hour > 23) {
+        showTemporaryMessage('Please enter a valid hour (0-23)', 'error');
+        return;
+    }
+
+    if (isNaN(minute) || minute < 0 || minute > 59) {
+        showTemporaryMessage('Please enter a valid minute (0-59)', 'error');
+        return;
+    }
+
+    if (isNaN(duration) || duration < 1 || duration > 180) {
+        showTemporaryMessage('Please enter a valid duration (1-180 minutes)', 'error');
+        return;
+    }
+
+    const scheduleData = {
+        clubName: clubName,
+        dayOfWeek: day,
+        startHour: hour,
+        startMinute: minute,
+        durationMinutes: duration,
+        enabled: enabled !== false
+    };
+
+    if (editingScheduleId) {
+        // Update existing schedule
+        scheduleData.id = editingScheduleId;
+        sendWebSocketMessage({
+            action: 'update_schedule',
+            schedule: scheduleData
+        });
+    } else {
+        // Add new schedule
+        sendWebSocketMessage({
+            action: 'add_schedule',
+            schedule: scheduleData
+        });
+    }
+
+    // Clear form
+    cancelScheduleEdit();
+}
+
+function cancelScheduleEdit() {
+    if (scheduleClubName) scheduleClubName.value = '';
+    if (scheduleDay) scheduleDay.value = 0;
+    if (scheduleHour) scheduleHour.value = '';
+    if (scheduleMinute) scheduleMinute.value = '';
+    if (scheduleDuration) scheduleDuration.value = 60;
+    if (scheduleEnabled) scheduleEnabled.checked = true;
+
+    editingScheduleId = null;
+
+    const formTitle = document.getElementById('schedule-form-title');
+    if (formTitle) {
+        formTitle.textContent = 'Add New Schedule';
+    }
+}
+
 function updateConnectionStatus(connected) {
     const statusDot = document.getElementById('connection-status');
     const connectionText = document.querySelector('.connection-text');
@@ -301,6 +682,163 @@ function initializeEventListeners() {
     breakTimerEnableInput.addEventListener('change', sendSettings);
     sirenLengthInput.addEventListener('change', sendSettings);
     sirenPauseInput.addEventListener('change', sendSettings);
+
+    // --- Authentication event listeners ---
+    if (loginBtn) {
+        loginBtn.addEventListener('click', () => {
+            const username = loginUsernameInput?.value.trim();
+            const password = loginPasswordInput?.value.trim();
+
+            if (!username || !password) {
+                showTemporaryMessage('Please enter username and password', 'error');
+                return;
+            }
+
+            sendWebSocketMessage({
+                action: 'authenticate',
+                username: username,
+                password: password
+            });
+        });
+    }
+
+    if (viewerBtn) {
+        viewerBtn.addEventListener('click', () => {
+            // Continue as viewer (no auth needed)
+            userRole = 'viewer';
+            currentUsername = 'Viewer';
+            loginModal.classList.add('hidden');
+            updateUIForRole();
+        });
+    }
+
+    if (loginDifferentBtn) {
+        loginDifferentBtn.addEventListener('click', () => {
+            loginModal.classList.remove('hidden');
+            if (loginUsernameInput) loginUsernameInput.value = '';
+            if (loginPasswordInput) loginPasswordInput.value = '';
+        });
+    }
+
+    if (userIcon) {
+        userIcon.addEventListener('click', () => {
+            if (userRole === 'admin') {
+                showUserManagementPage(true);
+                loadOperators();
+            } else {
+                showTemporaryMessage('Admin access required', 'error');
+            }
+        });
+    }
+
+    if (closeUserManagementBtn) {
+        closeUserManagementBtn.addEventListener('click', () => showUserManagementPage(false));
+    }
+
+    if (addOperatorBtn) {
+        addOperatorBtn.addEventListener('click', () => {
+            const username = newOperatorUsernameInput?.value.trim();
+            const password = newOperatorPasswordInput?.value.trim();
+
+            if (!username || !password) {
+                showTemporaryMessage('Please enter username and password', 'error');
+                return;
+            }
+
+            sendWebSocketMessage({
+                action: 'add_operator',
+                username: username,
+                password: password
+            });
+        });
+    }
+
+    if (changePasswordBtn) {
+        changePasswordBtn.addEventListener('click', () => {
+            const oldPassword = changeOldPasswordInput?.value.trim();
+            const newPassword = changeNewPasswordInput?.value.trim();
+
+            if (!oldPassword || !newPassword) {
+                showTemporaryMessage('Please enter old and new passwords', 'error');
+                return;
+            }
+
+            sendWebSocketMessage({
+                action: 'change_password',
+                username: currentUsername,
+                oldPassword: oldPassword,
+                newPassword: newPassword
+            });
+        });
+    }
+
+    if (factoryResetBtn) {
+        factoryResetBtn.addEventListener('click', () => {
+            if (confirm('Factory reset will restore all user accounts to defaults. This cannot be undone. Continue?')) {
+                sendWebSocketMessage({ action: 'factory_reset' });
+            }
+        });
+    }
+
+    // --- Schedule event listeners ---
+    if (scheduleIcon) {
+        scheduleIcon.addEventListener('click', () => {
+            if (userRole === 'viewer') {
+                showTemporaryMessage('Please login to access schedule management', 'error');
+                loginModal.classList.remove('hidden');
+            } else {
+                showSchedulePage(true);
+            }
+        });
+    }
+
+    if (closeScheduleBtn) {
+        closeScheduleBtn.addEventListener('click', () => showSchedulePage(false));
+    }
+
+    if (schedulingEnabledToggle) {
+        schedulingEnabledToggle.addEventListener('change', () => {
+            sendWebSocketMessage({
+                action: 'enable_scheduling',
+                enabled: schedulingEnabledToggle.checked
+            });
+        });
+    }
+
+    if (loadSchedulesBtn) {
+        loadSchedulesBtn.addEventListener('click', loadSchedules);
+    }
+
+    if (scheduleClubFilter) {
+        scheduleClubFilter.addEventListener('input', () => {
+            renderScheduleList();
+        });
+    }
+
+    if (saveScheduleBtn) {
+        saveScheduleBtn.addEventListener('click', saveSchedule);
+    }
+
+    if (cancelScheduleBtn) {
+        cancelScheduleBtn.addEventListener('click', cancelScheduleEdit);
+    }
+
+    // --- Keyboard support for login ---
+    if (loginPasswordInput) {
+        loginPasswordInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                loginBtn?.click();
+            }
+        });
+    }
+
+    if (loginUsernameInput) {
+        loginUsernameInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                loginBtn?.click();
+            }
+        });
+    }
 
     // Button click handlers with sound and disabled state
     startBtn.addEventListener('click', () => {
@@ -370,14 +908,16 @@ function connectWebSocket() {
         hideLoadingOverlay();
         reconnectAttempts = 0; // Reset on successful connection
         updateConnectionStatus(true);
-        isAuthenticated = false; // Will need to authenticate
+        // Show login modal after connection
+        if (loginModal) {
+            loginModal.classList.remove('hidden');
+        }
     };
 
     socket.onclose = () => {
         console.log('WebSocket disconnected');
         updateConnectionStatus(false);
         stopClientTimer();
-        isAuthenticated = false;
 
         // Exponential backoff reconnection
         reconnectAttempts++;
@@ -403,12 +943,89 @@ function connectWebSocket() {
 
         switch (data.event) {
             case 'auth_required':
-                promptPassword();
+                // Show login modal on connection
+                loginModal.classList.remove('hidden');
                 break;
 
             case 'auth_success':
-                isAuthenticated = true;
-                showTemporaryMessage("Authentication successful!", "success");
+                userRole = data.role || 'viewer';
+                currentUsername = data.username || 'Viewer';
+                loginModal.classList.add('hidden');
+                updateUIForRole();
+                showTemporaryMessage(`Welcome, ${currentUsername}!`, "success");
+                break;
+
+            case 'auth_failed':
+                showTemporaryMessage(data.message || "Authentication failed", "error");
+                loginModal.classList.remove('hidden');
+                break;
+
+            case 'operators_list':
+                renderOperatorsList(data.operators || []);
+                break;
+
+            case 'operator_added':
+                showTemporaryMessage(`Operator "${data.username}" added successfully`, "success");
+                if (newOperatorUsernameInput) newOperatorUsernameInput.value = '';
+                if (newOperatorPasswordInput) newOperatorPasswordInput.value = '';
+                loadOperators();
+                break;
+
+            case 'operator_removed':
+                showTemporaryMessage(`Operator "${data.username}" removed`, "success");
+                loadOperators();
+                break;
+
+            case 'password_changed':
+                showTemporaryMessage("Password changed successfully", "success");
+                if (changeOldPasswordInput) changeOldPasswordInput.value = '';
+                if (changeNewPasswordInput) changeNewPasswordInput.value = '';
+                break;
+
+            case 'factory_reset_complete':
+                showTemporaryMessage("Factory reset complete. Please refresh page.", "success");
+                setTimeout(() => window.location.reload(), 2000);
+                break;
+
+            case 'schedules_list':
+                schedules = data.schedules || [];
+                schedulingEnabled = data.schedulingEnabled || false;
+                if (schedulingEnabledToggle) {
+                    schedulingEnabledToggle.checked = schedulingEnabled;
+                }
+                renderCalendar();
+                renderScheduleList();
+                break;
+
+            case 'schedule_added':
+                showTemporaryMessage(`Schedule for "${data.schedule.clubName}" added`, "success");
+                loadSchedules();
+                break;
+
+            case 'schedule_updated':
+                showTemporaryMessage(`Schedule for "${data.schedule.clubName}" updated`, "success");
+                loadSchedules();
+                break;
+
+            case 'schedule_deleted':
+                showTemporaryMessage("Schedule deleted", "success");
+                loadSchedules();
+                break;
+
+            case 'schedule_started':
+                const schedule = data.schedule;
+                showTemporaryMessage(`Timer started by schedule: ${schedule.clubName}`, "success");
+                break;
+
+            case 'scheduling_enabled':
+                schedulingEnabled = data.enabled;
+                if (schedulingEnabledToggle) {
+                    schedulingEnabledToggle.checked = schedulingEnabled;
+                }
+                showTemporaryMessage(
+                    schedulingEnabled ? "Scheduling enabled" : "Scheduling disabled",
+                    "success"
+                );
                 break;
 
             case 'error':
@@ -487,6 +1104,11 @@ function connectWebSocket() {
         }
     };
 }
+
+// --- Make functions globally available for onclick handlers ---
+window.editSchedule = editSchedule;
+window.deleteSchedule = deleteSchedule;
+window.removeOperator = removeOperator;
 
 // --- Main Execution ---
 if (!SIMULATION_MODE) {
