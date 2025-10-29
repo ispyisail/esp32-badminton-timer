@@ -258,9 +258,13 @@ function promptPassword() {
 
 function updateConnectionStatus(connected) {
     const statusDot = document.getElementById('connection-status');
+    const connectionText = document.querySelector('.connection-text');
     if (statusDot) {
         statusDot.className = connected ? 'status-connected' : 'status-disconnected';
         statusDot.title = connected ? 'Connected' : 'Disconnected';
+    }
+    if (connectionText) {
+        connectionText.textContent = connected ? 'Connected' : 'Connecting...';
     }
 }
 

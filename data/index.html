@@ -9,61 +9,159 @@
 <body>
     <div class="container">
         <div id="main-page">
-            <div id="enable-display" class="status-idle">
-                <div class="top-bar">
-                    <div id="settings-icon">☰</div>
-                    <div id="round-counter">Round 1 of 3</div>
-                    <div class="connection-status-wrapper">
+            <!-- Header -->
+            <header class="header">
+                <div id="settings-icon" class="icon-button" title="Settings">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="12" cy="12" r="3"></circle>
+                        <path d="M12 1v6m0 6v6m-6-6h6m6 0h-6"></path>
+                    </svg>
+                </div>
+                <div class="header-title">
+                    <h1>Badminton Timer</h1>
+                    <div class="connection-badge">
                         <span id="connection-status" class="status-disconnected" title="Disconnected">●</span>
-                        <div id="time">--:--:--</div>
+                        <span class="connection-text">Connecting...</span>
                     </div>
                 </div>
-                <div class="main-timer">
-                    <div id="main-timer-display">00:00</div>
+                <div class="clock-display">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="12" cy="12" r="10"></circle>
+                        <polyline points="12 6 12 12 16 14"></polyline>
+                    </svg>
+                    <span id="time">--:--:--</span>
                 </div>
-                <div class="break-timer">
-                    <div id="break-timer-display">00:00</div>
+            </header>
+
+            <!-- Main Display -->
+            <div id="enable-display" class="status-idle">
+                <div class="round-info">
+                    <span id="round-counter">Round 1 of 3</span>
+                </div>
+
+                <div class="timer-display-card">
+                    <div class="timer-label">Game Timer</div>
+                    <div class="main-timer">
+                        <div id="main-timer-display">00:00</div>
+                    </div>
+                </div>
+
+                <div class="break-timer-card">
+                    <div class="timer-label">Break Timer</div>
+                    <div class="break-timer">
+                        <div id="break-timer-display">00:00</div>
+                    </div>
                 </div>
             </div>
+
+            <!-- Controls -->
             <div class="controls">
-                <button id="start-btn">Start</button>
-                <button id="pause-btn">Pause/Resume</button>
-                <button id="reset-btn">Stop/Reset</button>
+                <button id="start-btn" class="btn btn-success">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                        <polygon points="5 3 19 12 5 21 5 3"></polygon>
+                    </svg>
+                    <span>Start</span>
+                </button>
+                <button id="pause-btn" class="btn btn-warning">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                        <rect x="6" y="4" width="4" height="16"></rect>
+                        <rect x="14" y="4" width="4" height="16"></rect>
+                    </svg>
+                    <span>Pause</span>
+                </button>
+                <button id="reset-btn" class="btn btn-danger">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                        <rect x="6" y="6" width="12" height="12"></rect>
+                    </svg>
+                    <span>Reset</span>
+                </button>
             </div>
-            <div class="main-settings">
-                <div class="setting">
-                    <label for="game-duration">Game Duration (min):</label>
-                    <input type="number" id="game-duration" value="21">
-                </div>
-                <div class="setting">
-                    <label for="num-rounds">Number of Rounds:</label>
-                    <input type="number" id="num-rounds" value="3">
+
+            <!-- Quick Settings -->
+            <div class="quick-settings">
+                <div class="settings-card">
+                    <div class="setting-item">
+                        <label for="game-duration">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <circle cx="12" cy="12" r="10"></circle>
+                                <polyline points="12 6 12 12 16 14"></polyline>
+                            </svg>
+                            Game Duration
+                        </label>
+                        <div class="input-group">
+                            <input type="number" id="game-duration" value="21" min="1" max="120">
+                            <span class="unit">min</span>
+                        </div>
+                    </div>
+                    <div class="setting-item">
+                        <label for="num-rounds">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path>
+                            </svg>
+                            Rounds
+                        </label>
+                        <div class="input-group">
+                            <input type="number" id="num-rounds" value="3" min="1" max="20">
+                            <span class="unit">sets</span>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>
 
+        <!-- Settings Page -->
         <div id="settings-page" class="hidden">
-            <h2>Advanced Settings</h2>
+            <header class="header">
+                <div class="header-title">
+                    <h1>Advanced Settings</h1>
+                </div>
+            </header>
+
             <div class="settings-container">
-                <div class="setting">
-                    <label for="break-time">Break Time (sec):</label>
-                    <input type="number" id="break-time" value="60">
+                <div class="settings-card">
+                    <h3>Timer Settings</h3>
+                    <div class="setting-item">
+                        <label for="break-time">Break Time</label>
+                        <div class="input-group">
+                            <input type="number" id="break-time" value="60" min="1" max="3600">
+                            <span class="unit">sec</span>
+                        </div>
+                    </div>
+                    <div class="setting-item">
+                        <label for="break-timer-enable">Enable Break Timer</label>
+                        <label class="switch">
+                            <input type="checkbox" id="break-timer-enable" checked>
+                            <span class="slider"></span>
+                        </label>
+                    </div>
                 </div>
-                <div class="setting">
-                    <label for="break-timer-enable">Enable Break Timer:</label>
-                    <input type="checkbox" id="break-timer-enable" checked>
-                </div>
-                <div class="setting">
-                    <label for="siren-length">Siren Length (ms):</label>
-                    <input type="number" id="siren-length" value="1000">
-                </div>
-                <div class="setting">
-                    <label for="siren-pause">Siren Pause (ms):</label>
-                    <input type="number" id="siren-pause" value="1000">
+
+                <div class="settings-card">
+                    <h3>Siren Settings</h3>
+                    <div class="setting-item">
+                        <label for="siren-length">Blast Length</label>
+                        <div class="input-group">
+                            <input type="number" id="siren-length" value="1000" min="100" max="10000">
+                            <span class="unit">ms</span>
+                        </div>
+                    </div>
+                    <div class="setting-item">
+                        <label for="siren-pause">Blast Pause</label>
+                        <div class="input-group">
+                            <input type="number" id="siren-pause" value="1000" min="100" max="10000">
+                            <span class="unit">ms</span>
+                        </div>
+                    </div>
                 </div>
             </div>
+
             <div class="settings-controls">
-                <button id="save-settings-btn">Save & Close</button>
+                <button id="save-settings-btn" class="btn btn-primary btn-large">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polyline points="20 6 9 17 4 12"></polyline>
+                    </svg>
+                    <span>Save & Close</span>
+                </button>
             </div>
         </div>
     </div>
