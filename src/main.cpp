@@ -15,6 +15,7 @@
 #include "timer.h"
 #include "siren.h"
 #include "settings.h"
+#include "users.h"
 
 // ==========================================================================
 // --- Hardware & Global State ---
@@ -24,6 +25,7 @@
 Timer timer;
 Siren siren(RELAY_PIN);
 Settings settings;
+UserManager userManager;
 
 // Timezone
 Timezone myTZ;
@@ -33,8 +35,8 @@ AsyncWebServer server(80);
 AsyncWebSocket ws("/ws");
 DNSServer dns;
 
-// WebSocket Authentication
-std::map<uint32_t, bool> authenticatedClients;
+// WebSocket Authentication (maps client ID to user role)
+std::map<uint32_t, UserRole> authenticatedClients;
 
 // Periodic Sync
 unsigned long lastSyncBroadcast = 0;
@@ -92,6 +94,9 @@ void setup() {
 
     // Load settings from NVS
     settings.load(timer, siren);
+
+    // Initialize user management
+    userManager.begin();
 
     if (!connectToKnownWiFi()) {
         // If connection to a known network fails, start the captive portal
@@ -388,27 +393,32 @@ void handleWebSocketMessage(void *arg, uint8_t *data, size_t len, AsyncWebSocket
 
     String action = doc["action"];
 
-    // Check authentication for all actions except "authenticate"
-    if (action != "authenticate") {
-        if (!authenticatedClients[client->id()]) {
-            sendError(client, "Authentication required. Please enter password.");
-            return;
-        }
+    // Get client's role (default to VIEWER if not authenticated)
+    UserRole clientRole = VIEWER;
+    if (authenticatedClients.find(client->id()) != authenticatedClients.end()) {
+        clientRole = authenticatedClients[client->id()];
     }
 
     // Handle authentication
     if (action == "authenticate") {
+        String username = doc["username"] | "";
         String password = doc["password"] | "";
-        if (password == WEB_PASSWORD) {
-            authenticatedClients[client->id()] = true;
+
+        UserRole role = userManager.authenticate(username, password);
+
+        if (role != VIEWER || (username.isEmpty() && password.isEmpty())) {
+            // Successful authentication or viewer mode
+            authenticatedClients[client->id()] = role;
+
             StaticJsonDocument<256> authDoc;
             authDoc["event"] = "auth_success";
-            authDoc["message"] = "Authentication successful";
+            authDoc["role"] = (role == ADMIN) ? "admin" : (role == OPERATOR) ? "operator" : "viewer";
+            authDoc["username"] = (role == VIEWER) ? "Viewer" : username;
             String output;
             serializeJson(authDoc, output);
             client->text(output);
 
-            // Send initial state after authentication
+            // Send initial state
             sendSettingsUpdate(client);
             if (timer.getState() == RUNNING || timer.getState() == PAUSED) {
                 sendSync(client);
@@ -416,8 +426,24 @@ void handleWebSocketMessage(void *arg, uint8_t *data, size_t len, AsyncWebSocket
                 sendStateUpdate(client);
             }
         } else {
-            sendError(client, "Invalid password");
+            sendError(client, "Invalid credentials");
         }
+        return;
+    }
+
+    // Actions requiring OPERATOR or higher
+    const bool needsOperator = (action == "start" || action == "pause" || action == "reset" || action == "save_settings");
+    if (needsOperator && clientRole < OPERATOR) {
+        sendError(client, "Operator access required");
+        return;
+    }
+
+    // Actions requiring ADMIN
+    const bool needsAdmin = (action == "add_operator" || action == "remove_operator" ||
+                             action == "change_password" || action == "factory_reset" ||
+                             action == "get_operators");
+    if (needsAdmin && clientRole < ADMIN) {
+        sendError(client, "Admin access required");
         return;
     }
 
@@ -506,6 +532,89 @@ void handleWebSocketMessage(void *arg, uint8_t *data, size_t len, AsyncWebSocket
         // Save to NVS
         settings.save(timer, siren);
         sendSettingsUpdate(); // Notify all clients of the new settings
+    } else if (action == "add_operator") {
+        String username = doc["username"] | "";
+        String password = doc["password"] | "";
+
+        if (userManager.addOperator(username, password)) {
+            StaticJsonDocument<256> successDoc;
+            successDoc["event"] = "operator_added";
+            successDoc["username"] = username;
+            String output;
+            serializeJson(successDoc, output);
+            client->text(output);
+        } else {
+            sendError(client, "Failed to add operator. Check username/password.");
+        }
+    } else if (action == "remove_operator") {
+        String username = doc["username"] | "";
+
+        if (userManager.removeOperator(username)) {
+            StaticJsonDocument<256> successDoc;
+            successDoc["event"] = "operator_removed";
+            successDoc["username"] = username;
+            String output;
+            serializeJson(successDoc, output);
+            client->text(output);
+        } else {
+            sendError(client, "Failed to remove operator. User not found.");
+        }
+    } else if (action == "change_password") {
+        String username = doc["username"] | "";
+        String oldPassword = doc["oldPassword"] | "";
+        String newPassword = doc["newPassword"] | "";
+
+        if (userManager.changePassword(username, oldPassword, newPassword)) {
+            StaticJsonDocument<256> successDoc;
+            successDoc["event"] = "password_changed";
+            successDoc["message"] = "Password changed successfully";
+            String output;
+            serializeJson(successDoc, output);
+            client->text(output);
+        } else {
+            sendError(client, "Failed to change password. Check credentials.");
+        }
+    } else if (action == "get_operators") {
+        std::vector<String> operators = userManager.getOperators();
+
+        StaticJsonDocument<512> opDoc;
+        opDoc["event"] = "operators_list";
+        JsonArray opArray = opDoc.createNestedArray("operators");
+        for (const auto& op : operators) {
+            opArray.add(op);
+        }
+        String output;
+        serializeJson(opDoc, output);
+        client->text(output);
+    } else if (action == "factory_reset") {
+        // Perform factory reset
+        userManager.factoryReset();
+        timer.setGameDuration(DEFAULT_GAME_DURATION);
+        timer.setBreakDuration(DEFAULT_BREAK_DURATION);
+        timer.setNumRounds(DEFAULT_NUM_ROUNDS);
+        timer.setBreakTimerEnabled(DEFAULT_BREAK_TIMER_ENABLED);
+        siren.setBlastLength(DEFAULT_SIREN_LENGTH);
+        siren.setBlastPause(DEFAULT_SIREN_PAUSE);
+        settings.save(timer, siren);
+        timer.reset();
+
+        StaticJsonDocument<256> resetDoc;
+        resetDoc["event"] = "factory_reset_complete";
+        resetDoc["message"] = "System reset to factory defaults";
+        String output;
+        serializeJson(resetDoc, output);
+        ws.textAll(output); // Notify all clients
+
+        // Clear all authenticated clients except viewers
+        for (auto it = authenticatedClients.begin(); it != authenticatedClients.end();) {
+            if (it->second != VIEWER) {
+                it = authenticatedClients.erase(it);
+            } else {
+                ++it;
+            }
+        }
+
+        sendSettingsUpdate();
     }
     sendStateUpdate();
 }
@@ -515,8 +624,21 @@ void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventTyp
     switch(type) {
         case WS_EVT_CONNECT:
             Serial.printf("WebSocket client #%u connected from %s\n", client->id(), client->remoteIP().toString().c_str());
-            authenticatedClients[client->id()] = false; // Require authentication
-            sendAuthRequest(client); // Ask for password
+            authenticatedClients[client->id()] = VIEWER; // Default to viewer mode
+            // Send login prompt
+            StaticJsonDocument<256> loginDoc;
+            loginDoc["event"] = "login_prompt";
+            loginDoc["message"] = "Welcome! Login for full access or continue as viewer.";
+            String output;
+            serializeJson(loginDoc, output);
+            client->text(output);
+            // Send initial state for viewers
+            sendSettingsUpdate(client);
+            if (timer.getState() == RUNNING || timer.getState() == PAUSED) {
+                sendSync(client);
+            } else {
+                sendStateUpdate(client);
+            }
             break;
 
         case WS_EVT_DISCONNECT:

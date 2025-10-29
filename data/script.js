@@ -1,6 +1,8 @@
 // --- Get elements ---
 const mainPage = document.getElementById('main-page');
 const settingsPage = document.getElementById('settings-page');
+const userManagementPage = document.getElementById('user-management-page');
+const loginModal = document.getElementById('login-modal');
 const enableDisplay = document.getElementById('enable-display');
 const timeElement = document.getElementById('time');
 const roundCounterElement = document.getElementById('round-counter');
@@ -10,7 +12,27 @@ const startBtn = document.getElementById('start-btn');
 const pauseBtn = document.getElementById('pause-btn');
 const resetBtn = document.getElementById('reset-btn');
 const settingsIcon = document.getElementById('settings-icon');
+const userIcon = document.getElementById('user-icon');
 const saveSettingsBtn = document.getElementById('save-settings-btn');
+
+// --- Login elements ---
+const loginUsernameInput = document.getElementById('login-username');
+const loginPasswordInput = document.getElementById('login-password');
+const loginBtn = document.getElementById('login-btn');
+const viewerBtn = document.getElementById('viewer-btn');
+const loginDifferentBtn = document.getElementById('login-different-btn');
+const currentUserInfo = document.getElementById('current-user-info');
+
+// --- User management elements ---
+const newOperatorUsernameInput = document.getElementById('new-operator-username');
+const newOperatorPasswordInput = document.getElementById('new-operator-password');
+const addOperatorBtn = document.getElementById('add-operator-btn');
+const operatorsList = document.getElementById('operators-list');
+const changeOldPasswordInput = document.getElementById('change-old-password');
+const changeNewPasswordInput = document.getElementById('change-new-password');
+const changePasswordBtn = document.getElementById('change-password-btn');
+const factoryResetBtn = document.getElementById('factory-reset-btn');
+const closeUserManagementBtn = document.getElementById('close-user-management-btn');
 
 // --- Settings inputs ---
 const gameDurationInput = document.getElementById('game-duration');
@@ -38,7 +60,8 @@ const MAX_RECONNECT_ATTEMPTS = 10;
 let reconnectTimeout = null;
 
 // --- Authentication state ---
-let isAuthenticated = false;
+let userRole = 'viewer'; // 'viewer', 'operator', 'admin'
+let currentUsername = 'Viewer';
 
 // --- Button state tracking ---
 let buttonsEnabled = true;

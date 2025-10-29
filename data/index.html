@@ -11,11 +11,19 @@
         <div id="main-page">
             <!-- Header -->
             <header class="header">
-                <div id="settings-icon" class="icon-button" title="Settings">
-                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <circle cx="12" cy="12" r="3"></circle>
-                        <path d="M12 1v6m0 6v6m-6-6h6m6 0h-6"></path>
-                    </svg>
+                <div class="header-left">
+                    <div id="settings-icon" class="icon-button" title="Settings">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <circle cx="12" cy="12" r="3"></circle>
+                            <path d="M12 1v6m0 6v6m-6-6h6m6 0h-6"></path>
+                        </svg>
+                    </div>
+                    <div id="user-icon" class="icon-button" title="Login / User Management">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
+                            <circle cx="12" cy="7" r="4"></circle>
+                        </svg>
+                    </div>
                 </div>
                 <div class="header-title">
                     <h1>Badminton Timer</h1>
@@ -164,6 +172,103 @@
                 </button>
             </div>
         </div>
+        <!-- Login Modal -->
+        <div id="login-modal" class="modal hidden">
+            <div class="modal-content">
+                <h2>Login</h2>
+                <p class="modal-subtitle">Enter credentials or continue as viewer</p>
+                <div class="login-form">
+                    <div class="input-field">
+                        <label for="login-username">Username</label>
+                        <input type="text" id="login-username" placeholder="admin or operator name">
+                    </div>
+                    <div class="input-field">
+                        <label for="login-password">Password</label>
+                        <input type="password" id="login-password" placeholder="Password">
+                    </div>
+                    <div class="modal-buttons">
+                        <button id="login-btn" class="btn btn-primary btn-large">
+                            <span>Login</span>
+                        </button>
+                        <button id="viewer-btn" class="btn btn-secondary btn-large">
+                            <span>Continue as Viewer</span>
+                        </button>
+                    </div>
+                </div>
+                <div id="current-user-info" class="user-info hidden">
+                    <span class="user-role-badge">Viewer</span>
+                    <span class="user-name">Viewing Mode</span>
+                    <button id="login-different-btn" class="btn btn-small">Login Different User</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- User Management Page (Admin Only) -->
+        <div id="user-management-page" class="hidden">
+            <header class="header">
+                <div class="header-title">
+                    <h1>User Management</h1>
+                </div>
+            </header>
+
+            <div class="settings-container">
+                <div class="settings-card">
+                    <h3>Add Operator</h3>
+                    <div class="setting-item">
+                        <input type="text" id="new-operator-username" placeholder="Username" class="full-width-input">
+                    </div>
+                    <div class="setting-item">
+                        <input type="password" id="new-operator-password" placeholder="Password" class="full-width-input">
+                    </div>
+                    <button id="add-operator-btn" class="btn btn-success btn-large">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <line x1="12" y1="5" x2="12" y2="19"></line>
+                            <line x1="5" y1="12" x2="19" y2="12"></line>
+                        </svg>
+                        <span>Add Operator</span>
+                    </button>
+                </div>
+
+                <div class="settings-card">
+                    <h3>Operators List</h3>
+                    <div id="operators-list" class="operators-list">
+                        <p class="text-secondary">Loading...</p>
+                    </div>
+                </div>
+
+                <div class="settings-card">
+                    <h3>Change Password</h3>
+                    <div class="setting-item">
+                        <input type="password" id="change-old-password" placeholder="Current Password" class="full-width-input">
+                    </div>
+                    <div class="setting-item">
+                        <input type="password" id="change-new-password" placeholder="New Password" class="full-width-input">
+                    </div>
+                    <button id="change-password-btn" class="btn btn-warning btn-large">
+                        <span>Change My Password</span>
+                    </button>
+                </div>
+
+                <div class="settings-card danger-zone">
+                    <h3>Danger Zone</h3>
+                    <p class="text-secondary">Factory reset will restore all settings and user accounts to defaults.</p>
+                    <button id="factory-reset-btn" class="btn btn-danger btn-large">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polyline points="1 4 1 10 7 10"></polyline>
+                            <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path>
+                        </svg>
+                        <span>Factory Reset</span>
+                    </button>
+                </div>
+            </div>
+
+            <div class="settings-controls">
+                <button id="close-user-management-btn" class="btn btn-primary btn-large">
+                    <span>Close</span>
+                </button>
+            </div>
+        </div>
+
     </div>
     <script src="script.js"></script>
 </body>

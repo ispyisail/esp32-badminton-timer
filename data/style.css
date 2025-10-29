@@ -594,6 +594,236 @@ input:checked + .slider:before {
     }
 }
 
+/* --- Header Left Grouping --- */
+.header-left {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+}
+
+/* --- Modal Styles --- */
+.modal {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.7);
+    backdrop-filter: blur(5px);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 1000;
+    animation: fadeIn 0.3s ease;
+}
+
+.modal-content {
+    background: white;
+    border-radius: var(--border-radius-lg);
+    padding: 30px;
+    max-width: 400px;
+    width: 90%;
+    box-shadow: var(--shadow-xl);
+}
+
+.modal-content h2 {
+    margin: 0 0 10px 0;
+    color: var(--text-primary);
+    text-align: center;
+}
+
+.modal-subtitle {
+    text-align: center;
+    color: var(--text-secondary);
+    margin-bottom: 20px;
+    font-size: 0.9em;
+}
+
+.input-field {
+    margin-bottom: 15px;
+}
+
+.input-field label {
+    display: block;
+    margin-bottom: 5px;
+    font-weight: 500;
+    color: var(--text-primary);
+}
+
+.input-field input {
+    width: 100%;
+    padding: 10px;
+    border: 2px solid #e5e7eb;
+    border-radius: var(--border-radius-sm);
+    font-size: 1em;
+    transition: border-color var(--transition-fast);
+}
+
+.input-field input:focus {
+    outline: none;
+    border-color: var(--primary-color);
+}
+
+.modal-buttons {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin-top: 20px;
+}
+
+.btn-secondary {
+    background: linear-gradient(135deg, #6b7280 0%, #4b5563 100%);
+    color: white;
+}
+
+.btn-secondary:hover:not(:disabled) {
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-md);
+}
+
+.btn-small {
+    padding: 8px 16px;
+    font-size: 0.85em;
+}
+
+/* --- User Info --- */
+.user-info {
+    text-align: center;
+    padding: 20px;
+    background: #f9fafb;
+    border-radius: var(--border-radius-md);
+    margin-top: 20px;
+}
+
+.user-role-badge {
+    display: inline-block;
+    padding: 6px 12px;
+    border-radius: var(--border-radius-sm);
+    font-size: 0.85em;
+    font-weight: 600;
+    text-transform: uppercase;
+    margin-bottom: 10px;
+}
+
+.user-role-badge.admin {
+    background: linear-gradient(135deg, var(--danger-color) 0%, var(--danger-dark) 100%);
+    color: white;
+}
+
+.user-role-badge.operator {
+    background: linear-gradient(135deg, var(--warning-color) 0%, var(--warning-dark) 100%);
+    color: white;
+}
+
+.user-role-badge.viewer {
+    background: linear-gradient(135deg, #6b7280 0%, #4b5563 100%);
+    color: white;
+}
+
+.user-name {
+    display: block;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin-bottom: 15px;
+}
+
+/* --- Full Width Input --- */
+.full-width-input {
+    width: 100%;
+    padding: 10px;
+    border: 2px solid #e5e7eb;
+    border-radius: var(--border-radius-sm);
+    font-size: 1em;
+    transition: border-color var(--transition-fast);
+}
+
+.full-width-input:focus {
+    outline: none;
+    border-color: var(--primary-color);
+}
+
+/* --- Operators List --- */
+.operators-list {
+    max-height: 200px;
+    overflow-y: auto;
+}
+
+.operator-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 10px;
+    border-bottom: 1px solid #e5e7eb;
+}
+
+.operator-item:last-child {
+    border-bottom: none;
+}
+
+.operator-item .operator-name {
+    font-weight: 500;
+    color: var(--text-primary);
+}
+
+.operator-item .btn-danger {
+    padding: 6px 12px;
+    font-size: 0.85em;
+}
+
+.text-secondary {
+    color: var(--text-secondary);
+    font-size: 0.9em;
+}
+
+/* --- Danger Zone --- */
+.danger-zone {
+    border: 2px solid var(--danger-color);
+    background: #fef2f2;
+}
+
+.danger-zone h3 {
+    color: var(--danger-color);
+}
+
+/* --- Role-based visibility --- */
+.viewer-only {
+    display: none;
+}
+
+.operator-only {
+    display: none;
+}
+
+.admin-only {
+    display: none;
+}
+
+/* Show controls based on role */
+body.role-viewer .viewer-only {
+    display: block;
+}
+
+body.role-operator .operator-only,
+body.role-operator .viewer-only {
+    display: block;
+}
+
+body.role-admin .admin-only,
+body.role-admin .operator-only,
+body.role-admin .viewer-only {
+    display: block;
+}
+
+/* Hide controls for viewers */
+body.role-viewer .controls button {
+    opacity: 0.5;
+    pointer-events: none;
+}
+
+body.role-viewer .quick-settings input {
+    pointer-events: none;
+}
+
 /* --- Print Styles --- */
 @media print {
     body {
@@ -603,7 +833,9 @@ input:checked + .slider:before {
     .controls,
     .quick-settings,
     .header .icon-button,
-    #settings-page {
+    #settings-page,
+    #login-modal,
+    #user-management-page {
         display: none !important;
     }
 }
