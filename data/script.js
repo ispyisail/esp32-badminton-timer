@@ -124,8 +124,6 @@ function disableButtonsTemporarily(duration = 500) {
     }, duration);
 }
 
-// --- Function Definitions ---
-
 function formatTime(milliseconds) {
     if (isNaN(milliseconds) || milliseconds < 0) milliseconds = 0;
     const totalSeconds = Math.floor(milliseconds / 1000);

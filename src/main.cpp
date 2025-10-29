@@ -12,43 +12,21 @@
 #include "esp_task_wdt.h"
 #include "wifi_credentials.h"
 #include "config.h"
+#include "timer.h"
+#include "siren.h"
+#include "settings.h"
 
 // ==========================================================================
 // --- Hardware & Global State ---
 // ==========================================================================
 
-// Relay Pin
-const int relayPin = 26;
+// Modular components
+Timer timer;
+Siren siren(RELAY_PIN);
+Settings settings;
 
-// Timer States
-enum TimerState { IDLE, RUNNING, PAUSED, FINISHED };
-TimerState timerState = IDLE;
-
-// Timer Settings (with default values)
-unsigned long gameDuration = 21 * 60 * 1000;
-unsigned long breakDuration = 60 * 1000;
-unsigned int numRounds = 3;
-bool breakTimerEnabled = true;
-unsigned long sirenLength = 1000;
-unsigned long sirenPause = 1000;
-
-// Timer state variables
-unsigned int currentRound = 1;
-unsigned long mainTimerStart = 0;
-unsigned long breakTimerStart = 0;
-unsigned long mainTimerRemaining = 0;
-unsigned long breakTimerRemaining = 0;
-bool breakSirenSounded = false;
-
-// Non-blocking siren state variables
-bool isSirenActive = false;
-int sirenBlastsRemaining = 0;
-unsigned long lastSirenActionTime = 0;
-bool isRelayOn = false;
-
-// Timezone and Persistence
+// Timezone
 Timezone myTZ;
-Preferences preferences;
 
 // Web Server & WebSocket
 AsyncWebServer server(80);
@@ -60,7 +38,6 @@ std::map<uint32_t, bool> authenticatedClients;
 
 // Periodic Sync
 unsigned long lastSyncBroadcast = 0;
-const unsigned long SYNC_INTERVAL = 5000; // Sync every 5 seconds
 
 // ==========================================================================
 // --- Function Declarations ---
@@ -75,10 +52,6 @@ void sendError(AsyncWebSocketClient *client, const String& message);
 void sendAuthRequest(AsyncWebSocketClient *client);
 void handleWebSocketMessage(void *arg, uint8_t *data, size_t len, AsyncWebSocketClient *client);
 void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventType type, void *arg, uint8_t *data, size_t len);
-void startSiren(int blasts);
-void handleSiren();
-void loadSettings();
-void saveSettings();
 void setupOTA();
 void setupWatchdog();
 void runSelfTest();
@@ -95,8 +68,8 @@ void setup() {
     DEBUG_PRINTF("Build: %s %s\n", BUILD_DATE, BUILD_TIME);
     DEBUG_PRINTLN("=================================\n");
 
-    pinMode(relayPin, OUTPUT);
-    digitalWrite(relayPin, LOW);
+    pinMode(RELAY_PIN, OUTPUT);
+    digitalWrite(RELAY_PIN, LOW);
 
     // Configure watchdog timer
     if (ENABLE_WATCHDOG) {
@@ -114,7 +87,11 @@ void setup() {
         ESP.restart();
     }
 
-    loadSettings();
+    // Initialize siren hardware
+    siren.begin();
+
+    // Load settings from NVS
+    settings.load(timer, siren);
 
     if (!connectToKnownWiFi()) {
         // If connection to a known network fails, start the captive portal
@@ -201,56 +178,46 @@ void loop() {
     events(); // Process ezTime events for time synchronization
     ArduinoOTA.handle(); // Handle Over-the-Air update requests
     ws.cleanupClients(); // Clean up disconnected WebSocket clients
-    handleSiren(); // Handle the non-blocking siren logic
 
-    // Core timer logic, only runs when the timer is active
-    if (timerState == RUNNING) {
-        unsigned long now = millis();
+    // Update siren state (non-blocking)
+    siren.update();
 
-        // Calculate elapsed time with overflow protection
-        long mainElapsed = (long)(now - mainTimerStart);
-        long breakElapsed = (long)(now - breakTimerStart);
-        if (mainElapsed < 0) mainElapsed = 0; // Handle millis() overflow (~49 days)
-        if (breakElapsed < 0) breakElapsed = 0;
+    // Update timer state
+    if (timer.update()) {
+        // Timer state changed - check what happened
 
-        mainTimerRemaining = (mainElapsed < (long)gameDuration) ? (gameDuration - mainElapsed) : 0;
-        breakTimerRemaining = (breakElapsed < (long)breakDuration) ? (breakDuration - breakElapsed) : 0;
-
-        // Check if the break period has ended
-        if (breakTimerEnabled && !breakSirenSounded && breakTimerRemaining == 0) {
-            startSiren(1); // End of break: 1 blast
-            breakSirenSounded = true;
+        if (timer.hasBreakEnded()) {
+            siren.start(1); // End of break: 1 blast
         }
 
-        // Check if the game round has ended
-        if (mainTimerRemaining == 0) {
-            startSiren(2); // End of round: 2 blasts
-
-            if (currentRound >= numRounds) {
-                timerState = FINISHED;
-                startSiren(3); // Match completion fanfare: 3 blasts
+        if (timer.hasRoundEnded()) {
+            if (timer.isMatchFinished()) {
+                // Match completed - play 3-blast fanfare
+                siren.start(3);
                 sendEvent("finished");
                 DEBUG_PRINTLN("Match completed! All rounds finished.");
             } else {
-                currentRound++;
-                mainTimerStart = millis();
-                breakTimerStart = millis();
-                breakSirenSounded = false;
+                // Round ended but more rounds to go - play 2 blasts
+                siren.start(2);
 
                 StaticJsonDocument<256> roundDoc;
                 roundDoc["event"] = "new_round";
-                roundDoc["gameDuration"] = gameDuration;
-                roundDoc["breakDuration"] = breakDuration;
-                roundDoc["currentRound"] = currentRound;
+                roundDoc["gameDuration"] = timer.getGameDuration();
+                roundDoc["breakDuration"] = timer.getBreakDuration();
+                roundDoc["currentRound"] = timer.getCurrentRound();
+                roundDoc["numRounds"] = timer.getNumRounds();
                 String output;
                 serializeJson(roundDoc, output);
                 ws.textAll(output);
             }
             sendStateUpdate();
         }
+    }
 
-        // Periodic sync broadcast to keep clients synchronized
-        if (now - lastSyncBroadcast >= SYNC_INTERVAL) {
+    // Periodic sync broadcast to keep clients synchronized
+    if (timer.getState() == RUNNING) {
+        unsigned long now = millis();
+        if (now - lastSyncBroadcast >= SYNC_INTERVAL_MS) {
             sendSync(nullptr); // Send to all clients
             lastSyncBroadcast = now;
         }
@@ -299,54 +266,9 @@ bool connectToKnownWiFi() {
     return false;
 }
 
-/**
- * @brief Handles the non-blocking siren logic.
- * This function is called on every loop and manages the on/off state of the relay
- * based on the siren settings, without using delay().
- */
-void handleSiren() {
-    if (!isSirenActive) {
-        return;
-    }
-
-    unsigned long now = millis();
-
-    if (isRelayOn) { // If the relay is currently on
-        if (now - lastSirenActionTime >= sirenLength) {
-            digitalWrite(relayPin, LOW); // Turn it off
-            isRelayOn = false;
-            lastSirenActionTime = now;
-            sirenBlastsRemaining--;
-            if (sirenBlastsRemaining <= 0) {
-                isSirenActive = false; // All blasts are done
-            }
-        }
-    } else { // If the relay is currently off
-        if (sirenBlastsRemaining > 0) {
-            // Pause between blasts
-            if (now - lastSirenActionTime >= sirenPause) {
-                digitalWrite(relayPin, HIGH); // Turn it on
-                isRelayOn = true;
-                lastSirenActionTime = now;
-            }
-        } else {
-            isSirenActive = false;
-        }
-    }
-}
-
-/**
- * @brief Starts a non-blocking siren sequence.
- * @param blasts The number of times the siren should sound.
- */
-void startSiren(int blasts) {
-    if (isSirenActive) return; // Don't start a new sequence if one is running
-    sirenBlastsRemaining = blasts;
-    isSirenActive = true;
-    isRelayOn = false;
-    // Start the first blast immediately by pretending the last pause just ended
-    lastSirenActionTime = millis() - sirenPause; 
-}
+// ==========================================================================
+// --- Helper Functions ---
+// ==========================================================================
 
 /**
  * @brief Formats the current time into a 12-hour AM/PM string.
@@ -372,11 +294,13 @@ void sendStateUpdate(AsyncWebSocketClient *client) {
     StaticJsonDocument<512> doc;
     doc["event"] = "state";
     JsonObject state = doc.createNestedObject("state");
+
+    TimerState timerState = timer.getState();
     state["status"] = (timerState == RUNNING) ? "RUNNING" : ((timerState == PAUSED) ? "PAUSED" : "IDLE");
-    state["mainTimer"] = (timerState == RUNNING || timerState == PAUSED) ? mainTimerRemaining : gameDuration;
-    state["breakTimer"] = (timerState == RUNNING || timerState == PAUSED) ? breakTimerRemaining : breakDuration;
-    state["currentRound"] = currentRound;
-    state["numRounds"] = numRounds;
+    state["mainTimer"] = (timerState == RUNNING || timerState == PAUSED) ? timer.getMainTimerRemaining() : timer.getGameDuration();
+    state["breakTimer"] = (timerState == RUNNING || timerState == PAUSED) ? timer.getBreakTimerRemaining() : timer.getBreakDuration();
+    state["currentRound"] = timer.getCurrentRound();
+    state["numRounds"] = timer.getNumRounds();
     state["time"] = getFormattedTime12Hour();
 
     String output;
@@ -391,13 +315,13 @@ void sendStateUpdate(AsyncWebSocketClient *client) {
 void sendSettingsUpdate(AsyncWebSocketClient *client) {
     StaticJsonDocument<512> doc;
     doc["event"] = "settings";
-    JsonObject settings = doc.createNestedObject("settings");
-    settings["gameDuration"] = gameDuration;
-    settings["breakDuration"] = breakDuration;
-    settings["numRounds"] = numRounds;
-    settings["breakTimerEnabled"] = breakTimerEnabled;
-    settings["sirenLength"] = sirenLength;
-    settings["sirenPause"] = sirenPause;
+    JsonObject settingsObj = doc.createNestedObject("settings");
+    settingsObj["gameDuration"] = timer.getGameDuration();
+    settingsObj["breakDuration"] = timer.getBreakDuration();
+    settingsObj["numRounds"] = timer.getNumRounds();
+    settingsObj["breakTimerEnabled"] = timer.isBreakTimerEnabled();
+    settingsObj["sirenLength"] = siren.getBlastLength();
+    settingsObj["sirenPause"] = siren.getBlastPause();
 
     String output;
     serializeJson(doc, output);
@@ -411,12 +335,12 @@ void sendSettingsUpdate(AsyncWebSocketClient *client) {
 void sendSync(AsyncWebSocketClient *client) {
     StaticJsonDocument<512> syncDoc;
     syncDoc["event"] = "sync";
-    syncDoc["mainTimerRemaining"] = mainTimerRemaining;
-    syncDoc["breakTimerRemaining"] = breakTimerRemaining;
+    syncDoc["mainTimerRemaining"] = timer.getMainTimerRemaining();
+    syncDoc["breakTimerRemaining"] = timer.getBreakTimerRemaining();
     syncDoc["serverMillis"] = millis(); // Server timestamp for client sync
-    syncDoc["currentRound"] = currentRound;
-    syncDoc["numRounds"] = numRounds;
-    syncDoc["status"] = (timerState == PAUSED) ? "PAUSED" : "RUNNING";
+    syncDoc["currentRound"] = timer.getCurrentRound();
+    syncDoc["numRounds"] = timer.getNumRounds();
+    syncDoc["status"] = (timer.getState() == PAUSED) ? "PAUSED" : "RUNNING";
 
     String output;
     serializeJson(syncDoc, output);
@@ -486,7 +410,7 @@ void handleWebSocketMessage(void *arg, uint8_t *data, size_t len, AsyncWebSocket
 
             // Send initial state after authentication
             sendSettingsUpdate(client);
-            if (timerState == RUNNING || timerState == PAUSED) {
+            if (timer.getState() == RUNNING || timer.getState() == PAUSED) {
                 sendSync(client);
             } else {
                 sendStateUpdate(client);
@@ -498,44 +422,33 @@ void handleWebSocketMessage(void *arg, uint8_t *data, size_t len, AsyncWebSocket
     }
 
     if (action == "start") {
-        if (timerState == RUNNING || timerState == PAUSED) {
+        if (timer.getState() == RUNNING || timer.getState() == PAUSED) {
             sendError(client, "Timer already active. Reset first.");
             return;
         }
-        if (timerState == IDLE || timerState == FINISHED) {
-        timerState = RUNNING;
-        currentRound = 1;
-        mainTimerStart = millis();
-        breakTimerStart = millis();
-        mainTimerRemaining = gameDuration;
-        breakTimerRemaining = breakDuration;
-        breakSirenSounded = false;
-        
-        StaticJsonDocument<256> startDoc;
-        startDoc["event"] = "start";
-        startDoc["gameDuration"] = gameDuration;
-        startDoc["breakDuration"] = breakDuration;
-        startDoc["numRounds"] = numRounds;
-        startDoc["currentRound"] = currentRound;
-        String output;
-        serializeJson(startDoc, output);
-        ws.textAll(output);
+        if (timer.getState() == IDLE || timer.getState() == FINISHED) {
+            timer.start();
 
+            StaticJsonDocument<256> startDoc;
+            startDoc["event"] = "start";
+            startDoc["gameDuration"] = timer.getGameDuration();
+            startDoc["breakDuration"] = timer.getBreakDuration();
+            startDoc["numRounds"] = timer.getNumRounds();
+            startDoc["currentRound"] = timer.getCurrentRound();
+            String output;
+            serializeJson(startDoc, output);
+            ws.textAll(output);
+        }
     } else if (action == "pause") {
-        if (timerState == RUNNING) {
-            timerState = PAUSED;
-            mainTimerRemaining = gameDuration > (millis() - mainTimerStart) ? gameDuration - (millis() - mainTimerStart) : 0;
-            breakTimerRemaining = breakDuration > (millis() - breakTimerStart) ? breakDuration - (millis() - breakTimerStart) : 0;
+        if (timer.getState() == RUNNING) {
+            timer.pause();
             sendEvent("pause");
-        } else if (timerState == PAUSED) {
-            timerState = RUNNING;
-            mainTimerStart = millis() - (gameDuration - mainTimerRemaining);
-            breakTimerStart = millis() - (breakDuration - breakTimerRemaining);
+        } else if (timer.getState() == PAUSED) {
+            timer.resume();
             sendEvent("resume");
         }
     } else if (action == "reset") {
-        timerState = IDLE;
-        currentRound = 1;
+        timer.reset();
         sendEvent("reset");
     } else if (action == "save_settings") {
         JsonObject settings = doc["settings"];
@@ -582,14 +495,16 @@ void handleWebSocketMessage(void *arg, uint8_t *data, size_t len, AsyncWebSocket
             return;
         }
 
-        // All validation passed, save settings
-        gameDuration = gameDur * 60000;
-        breakDuration = breakDur * 1000;
-        numRounds = rounds;
-        breakTimerEnabled = settings["breakTimerEnabled"].as<bool>();
-        sirenLength = sirenLen;
-        sirenPause = sirenPau;
-        saveSettings();
+        // All validation passed, apply to timer and siren
+        timer.setGameDuration(gameDur * 60000);
+        timer.setBreakDuration(breakDur * 1000);
+        timer.setNumRounds(rounds);
+        timer.setBreakTimerEnabled(settings["breakTimerEnabled"].as<bool>();
+        siren.setBlastLength(sirenLen);
+        siren.setBlastPause(sirenPau);
+
+        // Save to NVS
+        settings.save(timer, siren);
         sendSettingsUpdate(); // Notify all clients of the new settings
     }
     sendStateUpdate();
@@ -627,35 +542,7 @@ void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventTyp
 // --- Settings Persistence ---
 // ==========================================================================
 
-void loadSettings() {
-    if (!preferences.begin("timer", false)) {
-        Serial.println("Failed to open preferences for reading. Using defaults.");
-        return;
-    }
-    gameDuration = preferences.getULong("gameDuration", 21 * 60 * 1000);
-    breakDuration = preferences.getULong("breakDuration", 60 * 1000);
-    numRounds = preferences.getUInt("numRounds", 3);
-    breakTimerEnabled = preferences.getBool("breakEnabled", true);
-    sirenLength = preferences.getULong("sirenLength", 1000);
-    sirenPause = preferences.getULong("sirenPause", 1000);
-    preferences.end();
-    Serial.println("Settings loaded successfully");
-}
-
-void saveSettings() {
-    if (!preferences.begin("timer", false)) {
-        Serial.println("Failed to open preferences for writing.");
-        return;
-    }
-    preferences.putULong("gameDuration", gameDuration);
-    preferences.putULong("breakDuration", breakDuration);
-    preferences.putUInt("numRounds", numRounds);
-    preferences.putBool("breakEnabled", breakTimerEnabled);
-    preferences.putULong("sirenLength", sirenLength);
-    preferences.putULong("sirenPause", sirenPause);
-    preferences.end();
-    Serial.println("Settings saved successfully");
-}
+// Settings are now handled by the Settings class (settings.h/cpp)
 
 // ==========================================================================
 // --- OTA Updates ---
@@ -756,9 +643,9 @@ void runSelfTest() {
 
     // Test 3: Relay
     DEBUG_PRINT("  Testing Relay... ");
-    digitalWrite(relayPin, HIGH);
+    digitalWrite(RELAY_PIN, HIGH);
     delay(100);
-    digitalWrite(relayPin, LOW);
+    digitalWrite(RELAY_PIN, LOW);
     DEBUG_PRINTLN("PASS");
 
     if (allTestsPassed) {
