@@ -98,7 +98,7 @@ public:
 
 private:
     String adminUsername;
-    String adminPassword;
+    String adminPasswordHash;  // Changed: store hash instead of plaintext
     std::vector<User> operators;
 
     static const int MAX_OPERATORS = 10;
@@ -122,4 +122,26 @@ private:
      * @brief Set default admin credentials
      */
     void setDefaults();
+
+    /**
+     * @brief Hash a password using SHA-256
+     * @param password Plaintext password
+     * @return Hexadecimal string representation of hash
+     */
+    String hashPassword(const String& password);
+
+    /**
+     * @brief Verify password against stored hash
+     * @param password Plaintext password to check
+     * @param hash Stored password hash
+     * @return True if password matches hash
+     */
+    bool verifyPassword(const String& password, const String& hash);
+
+    /**
+     * @brief Check if string is a valid SHA-256 hex hash
+     * @param str String to check
+     * @return True if string is 64 hex characters
+     */
+    bool isValidHash(const String& str);
 };

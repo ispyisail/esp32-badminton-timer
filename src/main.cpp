@@ -199,8 +199,10 @@ void setup() {
         request->send(204);
     });
 
-    // Set timezone and allow ezTime to sync in the background (non-blocking)
-    myTZ.setLocation("Pacific/Auckland");
+    // Set timezone from settings and allow ezTime to sync in the background (non-blocking)
+    String configuredTimezone = settings.getTimezone();
+    myTZ.setLocation(configuredTimezone);
+    Serial.printf("Timezone configured: %s\n", configuredTimezone.c_str());
     
     // Serve the main web page and static files
     server.on("/", HTTP_GET, [](AsyncWebServerRequest *request) {
@@ -277,9 +279,9 @@ void loop() {
         }
     }
 
-    // Check for scheduled timer starts (once per minute)
+    // Check for scheduled timer starts (every 30 seconds for better reliability)
     static unsigned long lastScheduleCheck = 0;
-    if (millis() - lastScheduleCheck >= 60000) { // Check every minute
+    if (millis() - lastScheduleCheck >= 30000) { // Check every 30 seconds (reduced from 60s)
         lastScheduleCheck = millis();
 
         Schedule triggeredSchedule;
@@ -529,7 +531,7 @@ void sendNTPStatus(AsyncWebSocketClient *client) {
 
     // Add timezone info if synced
     if (synced) {
-        doc["timezone"] = "Pacific/Auckland";
+        doc["timezone"] = settings.getTimezone();
         doc["dateTime"] = myTZ.dateTime("Y-m-d H:i:s"); // ISO format for verification
         // Note: ezTime syncs every 30 minutes automatically via events() call
         doc["autoSyncInterval"] = 30; // minutes
@@ -680,7 +682,7 @@ void handleWebSocketMessage(void *arg, uint8_t *data, size_t len, AsyncWebSocket
     // Actions requiring ADMIN
     const bool needsAdmin = (action == "add_operator" || action == "remove_operator" ||
                              action == "change_password" || action == "factory_reset" ||
-                             action == "get_operators");
+                             action == "get_operators" || action == "set_timezone");
     if (needsAdmin && clientRole < ADMIN) {
         sendError(client, "Admin access required");
         return;
@@ -771,6 +773,35 @@ void handleWebSocketMessage(void *arg, uint8_t *data, size_t len, AsyncWebSocket
         // Save to NVS
         settings.save(timer, siren);
         sendSettingsUpdate(); // Notify all clients of the new settings
+    } else if (action == "set_timezone") {
+        String timezone = doc["timezone"] | "";
+
+        if (timezone.length() == 0) {
+            sendError(client, "Timezone cannot be empty");
+            return;
+        }
+
+        // Set and save the new timezone
+        if (settings.setTimezone(timezone)) {
+            // Update ezTime timezone immediately
+            myTZ.setLocation(timezone);
+
+            Serial.printf("Timezone changed to: %s\n", timezone.c_str());
+
+            // Confirm to client
+            StaticJsonDocument<256> successDoc;
+            successDoc["event"] = "timezone_changed";
+            successDoc["timezone"] = timezone;
+            successDoc["message"] = "Timezone updated successfully. Please refresh schedules.";
+            String output;
+            serializeJson(successDoc, output);
+            client->text(output);
+
+            // Notify all clients to update their NTP status
+            sendNTPStatus();
+        } else {
+            sendError(client, "Failed to set timezone");
+        }
     } else if (action == "add_operator") {
         String username = doc["username"] | "";
         String password = doc["password"] | "";
@@ -868,7 +899,8 @@ void handleWebSocketMessage(void *arg, uint8_t *data, size_t len, AsyncWebSocket
 
         // Buffer size calculation: 50 schedules * 150 bytes/schedule ≈ 7500 bytes
         // Adding 500 byte overhead = 8000 bytes total, round up to 8192
-        StaticJsonDocument<8192> schedulesDoc;
+        // Use DynamicJsonDocument to prevent stack overflow with many schedules
+        DynamicJsonDocument schedulesDoc(8192);
         schedulesDoc["event"] = "schedules_list";
         schedulesDoc["schedulingEnabled"] = scheduleManager.isSchedulingEnabled();
         JsonArray schedulesArray = schedulesDoc.createNestedArray("schedules");
@@ -1154,7 +1186,7 @@ void handleWebSocketMessage(void *arg, uint8_t *data, size_t len, AsyncWebSocket
 
         std::vector<String> categories;
         if (helloClubClient.fetchAvailableCategories(helloClubDaysAhead, categories)) {
-            StaticJsonDocument<1024> categoriesDoc;
+            DynamicJsonDocument categoriesDoc(1024);
             categoriesDoc["event"] = "helloclub_categories";
             JsonArray catArray = categoriesDoc.createNestedArray("categories");
             for (const auto& cat : categories) {
@@ -1194,7 +1226,7 @@ void handleWebSocketMessage(void *arg, uint8_t *data, size_t len, AsyncWebSocket
                 // Check for conflicts
                 bool hasConflict = false;
                 Schedule tempSchedule;
-                if (helloClubClient.convertEventToSchedule(evt, "HelloClub", tempSchedule)) {
+                if (helloClubClient.convertEventToSchedule(evt, "HelloClub", tempSchedule, &myTZ)) {
                     std::vector<Schedule> existingSchedules = scheduleManager.getSchedules();
                     for (const auto& existing : existingSchedules) {
                         if (existing.dayOfWeek == tempSchedule.dayOfWeek &&
@@ -1256,9 +1288,9 @@ void handleWebSocketMessage(void *arg, uint8_t *data, size_t len, AsyncWebSocket
                 continue;
             }
 
-            // Convert to schedule
+            // Convert to schedule with timezone conversion
             Schedule newSchedule;
-            if (!helloClubClient.convertEventToSchedule(*selectedEvent, "HelloClub", newSchedule)) {
+            if (!helloClubClient.convertEventToSchedule(*selectedEvent, "HelloClub", newSchedule, &myTZ)) {
                 skippedCount++;
                 continue;
             }
@@ -1577,9 +1609,9 @@ bool syncHelloClubEvents(bool skipConflictCheck) {
     int skippedCount = 0;
 
     for (const auto& event : events) {
-        // Convert event to schedule
+        // Convert event to schedule with timezone conversion
         Schedule newSchedule;
-        if (!helloClubClient.convertEventToSchedule(event, "HelloClub", newSchedule)) {
+        if (!helloClubClient.convertEventToSchedule(event, "HelloClub", newSchedule, &myTZ)) {
             Serial.printf("HelloClub: Failed to convert event '%s'\n", event.name.c_str());
             skippedCount++;
             continue;

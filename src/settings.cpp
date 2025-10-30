@@ -1,7 +1,10 @@
 #include "settings.h"
 #include "config.h"
 
-Settings::Settings() {
+Settings::Settings()
+    : timezone(TIMEZONE_LOCATION) // Default from config
+{
+    loadTimezone();
 }
 
 bool Settings::load(Timer& timer, Siren& siren) {
@@ -71,4 +74,54 @@ bool Settings::clear() {
     }
 
     return result;
+}
+
+void Settings::loadTimezone() {
+    if (!preferences.begin(PREFERENCES_NAMESPACE, true)) { // Read-only
+        DEBUG_PRINTLN("Failed to open preferences for reading timezone. Using default.");
+        timezone = TIMEZONE_LOCATION;
+        return;
+    }
+
+    timezone = preferences.getString("timezone", TIMEZONE_LOCATION);
+    preferences.end();
+
+    DEBUG_PRINTF("Timezone loaded: %s\n", timezone.c_str());
+}
+
+void Settings::saveTimezone() {
+    if (!preferences.begin(PREFERENCES_NAMESPACE, false)) { // Read-write
+        DEBUG_PRINTLN("Failed to open preferences for writing timezone.");
+        return;
+    }
+
+    preferences.putString("timezone", timezone);
+    preferences.end();
+
+    DEBUG_PRINTF("Timezone saved: %s\n", timezone.c_str());
+}
+
+bool Settings::setTimezone(const String& tz) {
+    if (tz.length() == 0) {
+        DEBUG_PRINTLN("Invalid timezone: empty string");
+        return false;
+    }
+
+    // Validate IANA timezone format (must contain '/' e.g., "America/New_York")
+    if (tz.indexOf('/') == -1) {
+        DEBUG_PRINTLN("Invalid timezone format: must be IANA format (e.g., 'Region/City')");
+        return false;
+    }
+
+    // Additional validation: reasonable length (IANA timezones are typically 10-40 chars)
+    if (tz.length() < 3 || tz.length() > 50) {
+        DEBUG_PRINTLN("Invalid timezone: length out of range");
+        return false;
+    }
+
+    timezone = tz;
+    saveTimezone();
+
+    DEBUG_PRINTF("Timezone set to: %s\n", timezone.c_str());
+    return true;
 }

@@ -107,6 +107,43 @@ constexpr unsigned long SPIFFS_RESTART_DELAY_MS = 5000;          // 5 seconds
 // Timezone
 constexpr const char* TIMEZONE_LOCATION = "Pacific/Auckland";    // New Zealand timezone
 
+// Session timeout
+constexpr unsigned long SESSION_TIMEOUT_MS = 30 * 60 * 1000;     // 30 minutes session timeout
+constexpr unsigned long SESSION_CHECK_INTERVAL_MS = 60000;       // Check sessions every 60 seconds
+
+// Schedule trigger checking
+constexpr unsigned long SCHEDULE_CHECK_INTERVAL_MS = 30000;      // Check every 30 seconds
+
+// Rate limiting
+constexpr int MAX_MESSAGES_PER_SECOND = 10;                      // Max messages per client per second
+
+// =============================================================================
+// User Management Configuration
+// =============================================================================
+
+// Password requirements
+constexpr int MIN_PASSWORD_LENGTH = 8;                           // Minimum password length (increased for security)
+
+// =============================================================================
+// Schedule Configuration
+// =============================================================================
+
+// Schedule validation limits
+constexpr int MIN_SCHEDULE_DURATION_MIN = 1;                     // Minimum 1 minute
+constexpr int MAX_SCHEDULE_DURATION_MIN = 180;                   // Maximum 180 minutes (3 hours)
+
+// Schedule trigger de-bounce
+constexpr int SCHEDULE_TRIGGER_DEBOUNCE_MIN = 2;                 // Don't re-trigger within 2 minutes
+
+// =============================================================================
+// Hello Club API Configuration
+// =============================================================================
+
+// API retry settings
+constexpr int HELLOCLUB_MAX_RETRIES = 3;                         // Maximum retry attempts
+constexpr int HELLOCLUB_RETRY_DELAY_MS[] = {1000, 2000, 4000};   // Exponential backoff delays
+constexpr int HELLOCLUB_REQUEST_TIMEOUT_MS = 10000;              // 10 second timeout
+
 // =============================================================================
 // Debug Configuration
 // =============================================================================

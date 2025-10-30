@@ -111,8 +111,8 @@ bool ScheduleManager::addSchedule(const Schedule& schedule) {
         Serial.println("Invalid minute");
         return false;
     }
-    if (schedule.durationMinutes < 1 || schedule.durationMinutes > 180) {
-        Serial.println("Invalid duration (must be 1-180 minutes)");
+    if (schedule.durationMinutes < MIN_SCHEDULE_DURATION_MIN || schedule.durationMinutes > MAX_SCHEDULE_DURATION_MIN) {
+        Serial.printf("Invalid duration (must be %d-%d minutes)\n", MIN_SCHEDULE_DURATION_MIN, MAX_SCHEDULE_DURATION_MIN);
         return false;
     }
 
@@ -226,8 +226,8 @@ bool ScheduleManager::checkScheduleTrigger(Timezone& tz, Schedule& triggeredSche
                     timeSinceTrigger = (WEEK_MINUTES - lastTrigger) + currentWeekMinute;
                 }
 
-                if (timeSinceTrigger < 2) {
-                    continue; // Don't re-trigger within 2 minutes
+                if (timeSinceTrigger < SCHEDULE_TRIGGER_DEBOUNCE_MIN) {
+                    continue; // Don't re-trigger within debounce period
                 }
             }
 

@@ -121,6 +121,18 @@ const audioContext = new (window.AudioContext || window.webkitAudioContext)();
 // --- Function Definitions ---
 
 /**
+ * @brief Escape HTML to prevent XSS attacks
+ * @param text Unsafe text that may contain HTML
+ * @return HTML-escaped safe string
+ */
+function escapeHtml(text) {
+    if (!text) return '';
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+/**
  * @brief Play a beep sound using Web Audio API
  * @param frequency Frequency in Hz (e.g., 440 for A4 note)
  * @param duration Duration in milliseconds
@@ -379,10 +391,11 @@ function renderOperatorsList(operators) {
 
     let html = '';
     operators.forEach(username => {
+        const safeUsername = escapeHtml(username);
         html += `
             <div class="operator-item">
-                <span class="operator-username">${username}</span>
-                <button class="btn btn-danger btn-small" onclick="removeOperator('${username}')">Remove</button>
+                <span class="operator-username">${safeUsername}</span>
+                <button class="btn btn-danger btn-small" onclick="removeOperator('${safeUsername}')">Remove</button>
             </div>
         `;
     });
@@ -445,7 +458,9 @@ function renderCalendar() {
                 if (!schedule.enabled) {
                     block.classList.add('schedule-disabled');
                 }
+                // Use textContent for safety (automatically escapes)
                 block.textContent = `${schedule.clubName} (${schedule.durationMinutes}m)`;
+                // Title attribute is automatically escaped by browser
                 block.title = `${schedule.clubName}\n${getDayName(schedule.dayOfWeek)} ${schedule.startHour.toString().padStart(2, '0')}:${schedule.startMinute.toString().padStart(2, '0')}\n${schedule.durationMinutes} minutes\nOwner: ${schedule.ownerUsername}`;
                 block.dataset.scheduleId = schedule.id;
                 block.addEventListener('click', (e) => {
@@ -500,20 +515,25 @@ function renderScheduleList() {
             ? '<span class="badge badge-success">Enabled</span>'
             : '<span class="badge badge-secondary">Disabled</span>';
 
+        // Escape user-provided data
+        const safeClubName = escapeHtml(schedule.clubName);
+        const safeOwner = escapeHtml(schedule.ownerUsername);
+        const safeId = escapeHtml(schedule.id);
+
         html += `
-            <div class="schedule-item" data-schedule-id="${schedule.id}">
+            <div class="schedule-item" data-schedule-id="${safeId}">
                 <div class="schedule-item-header">
-                    <h4>${schedule.clubName}</h4>
+                    <h4>${safeClubName}</h4>
                     ${enabledBadge}
                 </div>
                 <div class="schedule-item-details">
                     <span><strong>${getDayName(schedule.dayOfWeek)}</strong> at ${timeStr}</span>
                     <span>${schedule.durationMinutes} minutes</span>
-                    <span>Owner: ${schedule.ownerUsername}</span>
+                    <span>Owner: ${safeOwner}</span>
                 </div>
                 <div class="schedule-item-actions">
-                    <button class="btn btn-secondary btn-small" onclick="editSchedule('${schedule.id}')">Edit</button>
-                    <button class="btn btn-danger btn-small" onclick="deleteSchedule('${schedule.id}')">Delete</button>
+                    <button class="btn btn-secondary btn-small" onclick="editSchedule('${safeId}')">Edit</button>
+                    <button class="btn btn-danger btn-small" onclick="deleteSchedule('${safeId}')">Delete</button>
                 </div>
             </div>
         `;
@@ -748,11 +768,12 @@ function renderHelloClubCategories(categories) {
     let html = '';
     categories.forEach(category => {
         const isChecked = selectedCategories.includes(category);
+        const safeCategory = escapeHtml(category);
         html += `
             <div class="category-checkbox-item">
-                <input type="checkbox" id="cat-${category}" value="${category}" ${isChecked ? 'checked' : ''}
-                       onchange="toggleCategory('${category}')">
-                <label for="cat-${category}">${category}</label>
+                <input type="checkbox" id="cat-${safeCategory}" value="${safeCategory}" ${isChecked ? 'checked' : ''}
+                       onchange="toggleCategory('${safeCategory}')">
+                <label for="cat-${safeCategory}">${safeCategory}</label>
             </div>
         `;
     });
@@ -794,13 +815,19 @@ function renderHelloClubEvents(events) {
         const timeStr = startDate.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
         const dateStr = startDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 
+        // Escape user-provided data
+        const safeName = escapeHtml(event.name);
+        const safeId = escapeHtml(event.id);
+        const safeCategory = escapeHtml(event.categoryName);
+        const safeConflictWith = escapeHtml(event.conflictWith);
+
         html += `
             <div class="event-item ${conflictClass}">
                 <div class="event-checkbox-header">
-                    <input type="checkbox" id="event-${event.id}" value="${event.id}"
+                    <input type="checkbox" id="event-${safeId}" value="${safeId}"
                            ${hasConflict ? '' : 'checked'} class="event-checkbox">
                     <div class="event-info">
-                        <div class="event-name">${event.name}</div>
+                        <div class="event-name">${safeName}</div>
                         <div class="event-details">
                             <div class="event-detail-row">
                                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -824,7 +851,7 @@ function renderHelloClubEvents(events) {
                                     <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
                                     <circle cx="12" cy="7" r="4"></circle>
                                 </svg>
-                                <span>${event.categoryName}</span>
+                                <span>${safeCategory}</span>
                             </div>
                             ` : ''}
                         </div>
@@ -837,7 +864,7 @@ function renderHelloClubEvents(events) {
                         <line x1="12" y1="9" x2="12" y2="13"></line>
                         <line x1="12" y1="17" x2="12.01" y2="17"></line>
                     </svg>
-                    <span>Conflicts with existing schedule: ${event.conflictWith || 'Unknown'}</span>
+                    <span>Conflicts with existing schedule: ${safeConflictWith || 'Unknown'}</span>
                 </div>
                 ` : ''}
             </div>
@@ -893,6 +920,12 @@ function updateNTPStatus(data) {
         let tooltip = 'Time synced via NTP';
         if (data.timezone) {
             tooltip += `\nTimezone: ${data.timezone}`;
+
+            // Update timezone dropdown if present
+            const timezoneSelect = document.getElementById('timezone-select');
+            if (timezoneSelect) {
+                timezoneSelect.value = data.timezone;
+            }
         }
         if (data.autoSyncInterval) {
             tooltip += `\nAuto-sync: every ${data.autoSyncInterval} min`;
@@ -915,6 +948,28 @@ function initializeEventListeners() {
     breakTimerEnableInput.addEventListener('change', sendSettings);
     sirenLengthInput.addEventListener('change', sendSettings);
     sirenPauseInput.addEventListener('change', sendSettings);
+
+    // Timezone dropdown (admin only)
+    const timezoneSelect = document.getElementById('timezone-select');
+    if (timezoneSelect) {
+        timezoneSelect.addEventListener('change', () => {
+            if (userRole !== 'admin') {
+                showTemporaryMessage('Only administrators can change timezone', 'error');
+                return;
+            }
+
+            const newTimezone = timezoneSelect.value;
+            if (confirm(`Change timezone to ${newTimezone}?\n\nThis will affect all scheduled events and time display.`)) {
+                sendWebSocketMessage({
+                    action: 'set_timezone',
+                    timezone: newTimezone
+                });
+            } else {
+                // Revert to current value from NTP status
+                updateNTPStatus({ synced: true, timezone: timezoneSelect.dataset.currentTimezone || 'Pacific/Auckland' });
+            }
+        });
+    }
 
     // --- Authentication event listeners ---
     if (loginBtn) {
@@ -1182,7 +1237,7 @@ function connectWebSocket() {
 
     console.log('Connecting to WebSocket...');
     showLoadingOverlay('Connecting to timer...');
-    socket = new WebSocket(`ws://${window.location.hostname}/ws`);
+    socket = new WebSocket(`ws://${window.location.host}/ws`);
 
     socket.onopen = () => {
         console.log('WebSocket connected');
@@ -1261,6 +1316,15 @@ function connectWebSocket() {
                 showTemporaryMessage("Password changed successfully", "success");
                 if (changeOldPasswordInput) changeOldPasswordInput.value = '';
                 if (changeNewPasswordInput) changeNewPasswordInput.value = '';
+                break;
+
+            case 'timezone_changed':
+                showTemporaryMessage(`Timezone updated to ${data.timezone}`, "success");
+                // Store current timezone in dataset for reverting if needed
+                const timezoneSelect = document.getElementById('timezone-select');
+                if (timezoneSelect) {
+                    timezoneSelect.dataset.currentTimezone = data.timezone;
+                }
                 break;
 
             case 'factory_reset_complete':
