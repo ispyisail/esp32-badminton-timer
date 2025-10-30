@@ -107,6 +107,18 @@ bool Settings::setTimezone(const String& tz) {
         return false;
     }
 
+    // Validate IANA timezone format (must contain '/' e.g., "America/New_York")
+    if (tz.indexOf('/') == -1) {
+        DEBUG_PRINTLN("Invalid timezone format: must be IANA format (e.g., 'Region/City')");
+        return false;
+    }
+
+    // Additional validation: reasonable length (IANA timezones are typically 10-40 chars)
+    if (tz.length() < 3 || tz.length() > 50) {
+        DEBUG_PRINTLN("Invalid timezone: length out of range");
+        return false;
+    }
+
     timezone = tz;
     saveTimezone();
 

@@ -356,8 +356,7 @@ bool HelloClubClient::convertEventToSchedule(const HelloClubEvent& event, const 
         time_t utcTime = makeTime(hour, minute, second, day, month, year);
 
         // Convert to local time using ezTime
-        // setTime sets the UTC time, then we get local time from timezone
-        UTC.setTime(utcTime);
+        // tzTime() handles the conversion without modifying global state
         time_t localTime = localTz->tzTime(utcTime);
 
         // Extract local time components

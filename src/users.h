@@ -137,4 +137,11 @@ private:
      * @return True if password matches hash
      */
     bool verifyPassword(const String& password, const String& hash);
+
+    /**
+     * @brief Check if string is a valid SHA-256 hex hash
+     * @param str String to check
+     * @return True if string is 64 hex characters
+     */
+    bool isValidHash(const String& str);
 };

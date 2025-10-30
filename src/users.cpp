@@ -31,10 +31,10 @@ void UserManager::load() {
     adminUsername = prefs.getString(PREF_ADMIN_USER, "admin");
     String storedPass = prefs.getString(PREF_ADMIN_PASS, "");
 
-    // Migration: Check if password is plaintext (length != 64 chars for SHA-256 hex)
-    // or if it's the default "admin" password
-    if (storedPass.length() == 0 || storedPass == "admin" || storedPass.length() != 64) {
-        // First time or plaintext - hash the default password
+    // Migration: Check if password is already hashed
+    // A valid hash is exactly 64 hex characters (SHA-256)
+    if (storedPass.length() == 0 || !isValidHash(storedPass)) {
+        // First time or plaintext - hash the password
         Serial.println("Migrating admin password to hashed format");
         if (storedPass.length() == 0) {
             storedPass = "admin"; // Default password
@@ -44,7 +44,7 @@ void UserManager::load() {
         save(); // Save the hashed version
         prefs.begin(PREF_NAMESPACE, true); // Reopen as read-only
     } else {
-        // Already hashed
+        // Already hashed (valid 64-char hex string)
         adminPasswordHash = storedPass;
     }
 
@@ -64,12 +64,13 @@ void UserManager::load() {
             User op;
             op.username = username;
 
-            // Migration: Check if password is plaintext
-            if (password.length() != 64) {
+            // Migration: Check if password is already hashed (valid 64-char hex)
+            if (!isValidHash(password)) {
                 Serial.printf("Migrating password for operator '%s' to hashed format\n", username.c_str());
                 op.password = hashPassword(password);
                 needsMigration = true;
             } else {
+                // Already hashed
                 op.password = password;
             }
 
@@ -281,9 +282,29 @@ String UserManager::hashPassword(const String& password) {
     mbedtls_sha256_context ctx;
 
     mbedtls_sha256_init(&ctx);
-    mbedtls_sha256_starts(&ctx, 0); // 0 = SHA-256 (not SHA-224)
-    mbedtls_sha256_update(&ctx, (unsigned char*)password.c_str(), password.length());
-    mbedtls_sha256_finish(&ctx, hash);
+
+    // Error handling: Check if initialization succeeds
+    int ret = mbedtls_sha256_starts(&ctx, 0); // 0 = SHA-256 (not SHA-224)
+    if (ret != 0) {
+        Serial.printf("SHA-256 start failed with error: %d\n", ret);
+        mbedtls_sha256_free(&ctx);
+        return ""; // Return empty string on error
+    }
+
+    ret = mbedtls_sha256_update(&ctx, (unsigned char*)password.c_str(), password.length());
+    if (ret != 0) {
+        Serial.printf("SHA-256 update failed with error: %d\n", ret);
+        mbedtls_sha256_free(&ctx);
+        return "";
+    }
+
+    ret = mbedtls_sha256_finish(&ctx, hash);
+    if (ret != 0) {
+        Serial.printf("SHA-256 finish failed with error: %d\n", ret);
+        mbedtls_sha256_free(&ctx);
+        return "";
+    }
+
     mbedtls_sha256_free(&ctx);
 
     // Convert hash to hexadecimal string
@@ -299,5 +320,29 @@ String UserManager::hashPassword(const String& password) {
 
 bool UserManager::verifyPassword(const String& password, const String& hash) {
     String computedHash = hashPassword(password);
+
+    // If hashing failed, return false
+    if (computedHash.length() == 0) {
+        Serial.println("Password verification failed: hashing error");
+        return false;
+    }
+
     return computedHash.equals(hash);
+}
+
+bool UserManager::isValidHash(const String& str) {
+    // SHA-256 hash in hex is exactly 64 characters
+    if (str.length() != 64) {
+        return false;
+    }
+
+    // Check if all characters are valid hex (0-9, a-f)
+    for (size_t i = 0; i < str.length(); i++) {
+        char c = str.charAt(i);
+        if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F'))) {
+            return false;
+        }
+    }
+
+    return true;
 }
