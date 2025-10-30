@@ -11,6 +11,11 @@
 // Relay pin for siren control
 constexpr int RELAY_PIN = 26;
 
+// Factory reset button (BOOT button on most ESP32 boards)
+constexpr int FACTORY_RESET_BUTTON_PIN = 0;                   // GPIO 0 (BOOT button)
+constexpr unsigned long FACTORY_RESET_HOLD_TIME_MS = 10000;   // Hold for 10 seconds to factory reset
+constexpr unsigned long BUTTON_DEBOUNCE_MS = 50;              // Button debounce time
+
 // =============================================================================
 // Timer Configuration
 // =============================================================================

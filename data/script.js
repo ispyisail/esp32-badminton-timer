@@ -316,8 +316,8 @@ function sendWebSocketMessage(payload) {
 
 function sendSettings() {
     const newSettings = {
-        gameDuration: parseInt(gameDurationInput.value),
-        breakDuration: parseInt(breakTimeInput.value),
+        gameDuration: parseInt(gameDurationInput.value) * 60000, // Convert minutes to milliseconds
+        breakDuration: parseInt(breakTimeInput.value) * 1000, // Convert seconds to milliseconds
         numRounds: parseInt(numRoundsInput.value),
         breakTimerEnabled: breakTimerEnableInput.checked,
         sirenLength: parseInt(sirenLengthInput.value),
@@ -916,6 +916,11 @@ function updateNTPStatus(data) {
         ntpStatusElement.className = 'ntp-status ntp-synced';
         ntpStatusElement.textContent = '✓';
 
+        // Update the clock display on main page with the time from NTP
+        if (data.time && timeElement) {
+            timeElement.textContent = data.time;
+        }
+
         // Build tooltip with detailed info
         let tooltip = 'Time synced via NTP';
         if (data.timezone) {
@@ -925,6 +930,8 @@ function updateNTPStatus(data) {
             const timezoneSelect = document.getElementById('timezone-select');
             if (timezoneSelect) {
                 timezoneSelect.value = data.timezone;
+                // Also store in dataset for revert functionality
+                timezoneSelect.dataset.currentTimezone = data.timezone;
             }
         }
         if (data.autoSyncInterval) {

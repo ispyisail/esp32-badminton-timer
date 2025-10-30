@@ -64,6 +64,11 @@ bool lastNTPSyncStatus = false;
 unsigned long lastNTPStatusCheck = 0;
 const unsigned long NTP_CHECK_INTERVAL = 5000; // Check every 5 seconds
 
+// Factory Reset Button State
+unsigned long factoryResetButtonPressStart = 0;
+bool factoryResetButtonPressed = false;
+bool factoryResetInProgress = false;
+
 // Hello Club Integration
 String helloClubApiKey = "";
 bool helloClubEnabled = false;
@@ -110,6 +115,10 @@ void setup() {
 
     pinMode(RELAY_PIN, OUTPUT);
     digitalWrite(RELAY_PIN, LOW);
+
+    // Configure factory reset button (BOOT button)
+    pinMode(FACTORY_RESET_BUTTON_PIN, INPUT_PULLUP);
+    DEBUG_PRINTLN("Factory reset button configured (hold BOOT button for 10 seconds)");
 
     // Configure watchdog timer
     if (ENABLE_WATCHDOG) {
@@ -224,6 +233,86 @@ void loop() {
     // Reset watchdog timer
     if (ENABLE_WATCHDOG) {
         esp_task_wdt_reset();
+    }
+
+    // Check for factory reset button press (BOOT button)
+    // Button is active LOW (pressed = LOW, released = HIGH)
+    if (!factoryResetInProgress) {
+        bool buttonCurrentlyPressed = (digitalRead(FACTORY_RESET_BUTTON_PIN) == LOW);
+
+        if (buttonCurrentlyPressed && !factoryResetButtonPressed) {
+            // Button just pressed - start timing
+            factoryResetButtonPressStart = millis();
+            factoryResetButtonPressed = true;
+            DEBUG_PRINTLN("Factory reset button pressed - hold for 10 seconds...");
+        } else if (buttonCurrentlyPressed && factoryResetButtonPressed) {
+            // Button being held - check duration
+            unsigned long holdDuration = millis() - factoryResetButtonPressStart;
+
+            // Provide feedback every 2 seconds
+            static unsigned long lastFeedback = 0;
+            if (holdDuration - lastFeedback >= 2000) {
+                lastFeedback = holdDuration;
+                DEBUG_PRINTF("Factory reset: %lu seconds...\n", holdDuration / 1000);
+
+                // Blink relay as visual feedback
+                digitalWrite(RELAY_PIN, HIGH);
+                delay(100);
+                digitalWrite(RELAY_PIN, LOW);
+            }
+
+            if (holdDuration >= FACTORY_RESET_HOLD_TIME_MS) {
+                // Button held for required time - perform factory reset
+                factoryResetInProgress = true;
+                DEBUG_PRINTLN("\n=================================");
+                DEBUG_PRINTLN("FACTORY RESET TRIGGERED!");
+                DEBUG_PRINTLN("=================================\n");
+
+                // Give visual and audio feedback
+                for (int i = 0; i < 5; i++) {
+                    digitalWrite(RELAY_PIN, HIGH);
+                    delay(200);
+                    digitalWrite(RELAY_PIN, LOW);
+                    delay(200);
+                }
+
+                // Perform factory reset - reset all settings to defaults
+                userManager.factoryReset();
+
+                // Reset timer and siren to defaults
+                timer.setGameDuration(DEFAULT_GAME_DURATION);
+                timer.setBreakDuration(DEFAULT_BREAK_DURATION);
+                timer.setNumRounds(DEFAULT_NUM_ROUNDS);
+                timer.setBreakTimerEnabled(DEFAULT_BREAK_TIMER_ENABLED);
+                siren.setBlastLength(DEFAULT_SIREN_LENGTH);
+                siren.setBlastPause(DEFAULT_SIREN_PAUSE);
+                settings.save(timer, siren);
+                timer.reset();
+
+                // Clear all schedules
+                std::vector<Schedule> allSchedules = scheduleManager.getAllSchedules();
+                for (const auto& schedule : allSchedules) {
+                    scheduleManager.deleteSchedule(schedule.id);
+                }
+                scheduleManager.setSchedulingEnabled(false);
+
+                // Clear Hello Club settings
+                Preferences prefs;
+                prefs.begin("helloclub", false);
+                prefs.clear();
+                prefs.end();
+
+                DEBUG_PRINTLN("Factory reset complete. Restarting in 3 seconds...");
+                delay(3000);
+                ESP.restart();
+            }
+        } else if (!buttonCurrentlyPressed && factoryResetButtonPressed) {
+            // Button released before timeout
+            unsigned long holdDuration = millis() - factoryResetButtonPressStart;
+            DEBUG_PRINTF("Factory reset cancelled (held for %lu ms)\n", holdDuration);
+            factoryResetButtonPressed = false;
+            factoryResetButtonPressStart = 0;
+        }
     }
 
     events(); // Process ezTime events for time synchronization
