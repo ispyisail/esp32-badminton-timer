@@ -685,13 +685,8 @@ function updateNTPStatus(data) {
         if (data.timezone) {
             tooltip += `\nTimezone: ${data.timezone}`;
         }
-        if (data.lastSync !== undefined) {
-            const lastSyncMin = Math.floor(data.lastSync / 60);
-            tooltip += `\nLast sync: ${lastSyncMin} min ago`;
-        }
-        if (data.nextSync !== undefined) {
-            const nextSyncMin = Math.floor(data.nextSync / 60);
-            tooltip += `\nNext sync: ${nextSyncMin} min`;
+        if (data.autoSyncInterval) {
+            tooltip += `\nAuto-sync: every ${data.autoSyncInterval} min`;
         }
         ntpStatusElement.title = tooltip;
     } else {

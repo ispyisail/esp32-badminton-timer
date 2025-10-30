@@ -37,8 +37,9 @@ AsyncWebServer server(80);
 AsyncWebSocket ws("/ws");
 DNSServer dns;
 
-// WebSocket Authentication (maps client ID to user role)
+// WebSocket Authentication (maps client ID to user role and username)
 std::map<uint32_t, UserRole> authenticatedClients;
+std::map<uint32_t, String> authenticatedUsernames;
 
 // Periodic Sync
 unsigned long lastSyncBroadcast = 0;
@@ -445,11 +446,11 @@ void sendNTPStatus(AsyncWebSocketClient *client) {
     doc["synced"] = synced;
     doc["time"] = synced ? getFormattedTime12Hour() : "Not synced";
 
-    // Get last sync info from ezTime
+    // Add timezone info if synced
     if (synced) {
-        doc["lastSync"] = lastSync();  // Returns seconds since last NTP sync
-        doc["nextSync"] = nextSync();  // Returns seconds until next NTP sync
         doc["timezone"] = "Pacific/Auckland";
+        // Note: ezTime syncs every 30 minutes automatically via events() call
+        doc["autoSyncInterval"] = 30; // minutes
     }
 
     String output;
@@ -509,6 +510,13 @@ void handleWebSocketMessage(void *arg, uint8_t *data, size_t len, AsyncWebSocket
         if (role != VIEWER || (username.isEmpty() && password.isEmpty())) {
             // Successful authentication or viewer mode
             authenticatedClients[client->id()] = role;
+
+            // Store username for permission checks
+            if (role == ADMIN || role == OPERATOR) {
+                authenticatedUsernames[client->id()] = username;
+            } else {
+                authenticatedUsernames[client->id()] = "Viewer";
+            }
 
             StaticJsonDocument<256> authDoc;
             authDoc["event"] = "auth_success";
@@ -748,86 +756,183 @@ void handleWebSocketMessage(void *arg, uint8_t *data, size_t len, AsyncWebSocket
         serializeJson(schedulesDoc, output);
         client->text(output);
     } else if (action == "add_schedule") {
+        // Check permission first
+        if (clientRole < OPERATOR) {
+            sendError(client, "Operator access required");
+            return;
+        }
+
+        // Read schedule data from nested "schedule" object
+        JsonObject schedObj = doc["schedule"];
+        if (schedObj.isNull()) {
+            sendError(client, "Missing schedule data");
+            return;
+        }
+
         Schedule newSchedule;
         newSchedule.id = scheduleManager.generateScheduleId();
-        newSchedule.clubName = doc["clubName"] | "";
-        newSchedule.ownerUsername = (clientRole == ADMIN) ? "admin" : authenticatedClients[client->id()] == OPERATOR ? "operator" : "";
-        newSchedule.dayOfWeek = doc["dayOfWeek"] | 0;
-        newSchedule.startHour = doc["startHour"] | 0;
-        newSchedule.startMinute = doc["startMinute"] | 0;
-        newSchedule.durationMinutes = doc["durationMinutes"] | 60;
-        newSchedule.enabled = doc["enabled"] | true;
+        newSchedule.clubName = schedObj["clubName"] | "";
+        newSchedule.dayOfWeek = schedObj["dayOfWeek"] | 0;
+        newSchedule.startHour = schedObj["startHour"] | 0;
+        newSchedule.startMinute = schedObj["startMinute"] | 0;
+        newSchedule.durationMinutes = schedObj["durationMinutes"] | 60;
+        newSchedule.enabled = schedObj["enabled"] | true;
         newSchedule.createdAt = millis();
 
-        // Get the authenticated username for ownership
-        // (This is a simplification - in production you'd track username per client)
-        if (clientRole == OPERATOR || clientRole == ADMIN) {
-            if (scheduleManager.addSchedule(newSchedule)) {
-                StaticJsonDocument<256> successDoc;
-                successDoc["event"] = "schedule_added";
-                successDoc["scheduleId"] = newSchedule.id;
-                String output;
-                serializeJson(successDoc, output);
-                client->text(output);
-            } else {
-                sendError(client, "Failed to add schedule");
-            }
+        // Set owner to the authenticated user's actual username
+        if (authenticatedUsernames.find(client->id()) != authenticatedUsernames.end()) {
+            newSchedule.ownerUsername = authenticatedUsernames[client->id()];
         } else {
-            sendError(client, "Operator access required");
+            newSchedule.ownerUsername = "unknown";
+        }
+
+        if (scheduleManager.addSchedule(newSchedule)) {
+            StaticJsonDocument<512> successDoc;
+            successDoc["event"] = "schedule_added";
+            JsonObject scheduleObj = successDoc.createNestedObject("schedule");
+            scheduleObj["id"] = newSchedule.id;
+            scheduleObj["clubName"] = newSchedule.clubName;
+            scheduleObj["ownerUsername"] = newSchedule.ownerUsername;
+            scheduleObj["dayOfWeek"] = newSchedule.dayOfWeek;
+            scheduleObj["startHour"] = newSchedule.startHour;
+            scheduleObj["startMinute"] = newSchedule.startMinute;
+            scheduleObj["durationMinutes"] = newSchedule.durationMinutes;
+            scheduleObj["enabled"] = newSchedule.enabled;
+            String output;
+            serializeJson(successDoc, output);
+            client->text(output);
+        } else {
+            sendError(client, "Failed to add schedule");
         }
     } else if (action == "update_schedule") {
-        Schedule updatedSchedule;
-        updatedSchedule.id = doc["id"] | "";
-        updatedSchedule.clubName = doc["clubName"] | "";
-        updatedSchedule.ownerUsername = doc["ownerUsername"] | "";
-        updatedSchedule.dayOfWeek = doc["dayOfWeek"] | 0;
-        updatedSchedule.startHour = doc["startHour"] | 0;
-        updatedSchedule.startMinute = doc["startMinute"] | 0;
-        updatedSchedule.durationMinutes = doc["durationMinutes"] | 60;
-        updatedSchedule.enabled = doc["enabled"] | true;
-        updatedSchedule.createdAt = doc["createdAt"] | 0;
+        // Check permission first
+        if (clientRole < OPERATOR) {
+            sendError(client, "Operator access required");
+            return;
+        }
 
-        // Check permission
+        // Read schedule data from nested "schedule" object
+        JsonObject schedObj = doc["schedule"];
+        if (schedObj.isNull()) {
+            sendError(client, "Missing schedule data");
+            return;
+        }
+
+        String scheduleId = schedObj["id"] | "";
+        if (scheduleId.isEmpty()) {
+            sendError(client, "Missing schedule ID");
+            return;
+        }
+
+        // Get existing schedule to verify ownership and preserve owner
         Schedule existingSchedule;
-        if (scheduleManager.getScheduleById(updatedSchedule.id, existingSchedule)) {
-            if (scheduleManager.hasPermission(existingSchedule, "", clientRole == ADMIN)) {
-                if (scheduleManager.updateSchedule(updatedSchedule)) {
-                    StaticJsonDocument<256> successDoc;
-                    successDoc["event"] = "schedule_updated";
-                    successDoc["scheduleId"] = updatedSchedule.id;
-                    String output;
-                    serializeJson(successDoc, output);
-                    client->text(output);
-                } else {
-                    sendError(client, "Failed to update schedule");
-                }
-            } else {
-                sendError(client, "Permission denied");
-            }
-        } else {
+        if (!scheduleManager.getScheduleById(scheduleId, existingSchedule)) {
             sendError(client, "Schedule not found");
+            return;
+        }
+
+        // Get current user's username for permission check
+        String currentUsername = "";
+        if (authenticatedUsernames.find(client->id()) != authenticatedUsernames.end()) {
+            currentUsername = authenticatedUsernames[client->id()];
+        }
+
+        // Check permission (admin can edit all, operator can only edit their own)
+        if (!scheduleManager.hasPermission(existingSchedule, currentUsername, clientRole == ADMIN)) {
+            sendError(client, "Permission denied - you can only edit your own schedules");
+            return;
+        }
+
+        // Build updated schedule, preserving owner and creation time
+        Schedule updatedSchedule;
+        updatedSchedule.id = scheduleId;
+        updatedSchedule.clubName = schedObj["clubName"] | "";
+        updatedSchedule.dayOfWeek = schedObj["dayOfWeek"] | 0;
+        updatedSchedule.startHour = schedObj["startHour"] | 0;
+        updatedSchedule.startMinute = schedObj["startMinute"] | 0;
+        updatedSchedule.durationMinutes = schedObj["durationMinutes"] | 60;
+        updatedSchedule.enabled = schedObj["enabled"] | true;
+
+        // SECURITY: Never accept ownerUsername from client - preserve existing owner
+        updatedSchedule.ownerUsername = existingSchedule.ownerUsername;
+        updatedSchedule.createdAt = existingSchedule.createdAt;
+
+        // Validate schedule fields
+        if (updatedSchedule.dayOfWeek < 0 || updatedSchedule.dayOfWeek > 6) {
+            sendError(client, "Invalid day of week (must be 0-6)");
+            return;
+        }
+        if (updatedSchedule.startHour < 0 || updatedSchedule.startHour > 23) {
+            sendError(client, "Invalid hour (must be 0-23)");
+            return;
+        }
+        if (updatedSchedule.startMinute < 0 || updatedSchedule.startMinute > 59) {
+            sendError(client, "Invalid minute (must be 0-59)");
+            return;
+        }
+        if (updatedSchedule.durationMinutes < 1 || updatedSchedule.durationMinutes > 180) {
+            sendError(client, "Invalid duration (must be 1-180 minutes)");
+            return;
+        }
+
+        if (scheduleManager.updateSchedule(updatedSchedule)) {
+            StaticJsonDocument<512> successDoc;
+            successDoc["event"] = "schedule_updated";
+            JsonObject scheduleObj = successDoc.createNestedObject("schedule");
+            scheduleObj["id"] = updatedSchedule.id;
+            scheduleObj["clubName"] = updatedSchedule.clubName;
+            scheduleObj["ownerUsername"] = updatedSchedule.ownerUsername;
+            scheduleObj["dayOfWeek"] = updatedSchedule.dayOfWeek;
+            scheduleObj["startHour"] = updatedSchedule.startHour;
+            scheduleObj["startMinute"] = updatedSchedule.startMinute;
+            scheduleObj["durationMinutes"] = updatedSchedule.durationMinutes;
+            scheduleObj["enabled"] = updatedSchedule.enabled;
+            String output;
+            serializeJson(successDoc, output);
+            client->text(output);
+        } else {
+            sendError(client, "Failed to update schedule");
         }
     } else if (action == "delete_schedule") {
-        String scheduleId = doc["scheduleId"] | "";
+        // Check permission first
+        if (clientRole < OPERATOR) {
+            sendError(client, "Operator access required");
+            return;
+        }
+
+        String scheduleId = doc["id"] | "";
+        if (scheduleId.isEmpty()) {
+            sendError(client, "Missing schedule ID");
+            return;
+        }
 
         Schedule existingSchedule;
-        if (scheduleManager.getScheduleById(scheduleId, existingSchedule)) {
-            if (scheduleManager.hasPermission(existingSchedule, "", clientRole == ADMIN)) {
-                if (scheduleManager.deleteSchedule(scheduleId)) {
-                    StaticJsonDocument<256> successDoc;
-                    successDoc["event"] = "schedule_deleted";
-                    successDoc["scheduleId"] = scheduleId;
-                    String output;
-                    serializeJson(successDoc, output);
-                    client->text(output);
-                } else {
-                    sendError(client, "Failed to delete schedule");
-                }
-            } else {
-                sendError(client, "Permission denied");
-            }
-        } else {
+        if (!scheduleManager.getScheduleById(scheduleId, existingSchedule)) {
             sendError(client, "Schedule not found");
+            return;
+        }
+
+        // Get current user's username for permission check
+        String currentUsername = "";
+        if (authenticatedUsernames.find(client->id()) != authenticatedUsernames.end()) {
+            currentUsername = authenticatedUsernames[client->id()];
+        }
+
+        // Check permission (admin can delete all, operator can only delete their own)
+        if (!scheduleManager.hasPermission(existingSchedule, currentUsername, clientRole == ADMIN)) {
+            sendError(client, "Permission denied - you can only delete your own schedules");
+            return;
+        }
+
+        if (scheduleManager.deleteSchedule(scheduleId)) {
+            StaticJsonDocument<256> successDoc;
+            successDoc["event"] = "schedule_deleted";
+            successDoc["id"] = scheduleId;
+            String output;
+            serializeJson(successDoc, output);
+            client->text(output);
+        } else {
+            sendError(client, "Failed to delete schedule");
         }
     } else if (action == "enable_scheduling") {
         bool enabled = doc["enabled"] | false;
@@ -870,6 +975,7 @@ void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventTyp
         case WS_EVT_DISCONNECT:
             Serial.printf("WebSocket client #%u disconnected\n", client->id());
             authenticatedClients.erase(client->id()); // Clean up authentication state
+            authenticatedUsernames.erase(client->id()); // Clean up username mapping
             break;
 
         case WS_EVT_DATA:
