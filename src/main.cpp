@@ -17,6 +17,7 @@
 #include "settings.h"
 #include "users.h"
 #include "schedule.h"
+#include "helloclub.h"
 
 // ==========================================================================
 // --- Hardware & Global State ---
@@ -28,6 +29,7 @@ Siren siren(RELAY_PIN);
 Settings settings;
 UserManager userManager;
 ScheduleManager scheduleManager;
+HelloClubClient helloClubClient;
 
 // Timezone
 Timezone myTZ;
@@ -62,6 +64,15 @@ bool lastNTPSyncStatus = false;
 unsigned long lastNTPStatusCheck = 0;
 const unsigned long NTP_CHECK_INTERVAL = 5000; // Check every 5 seconds
 
+// Hello Club Integration
+String helloClubApiKey = "";
+bool helloClubEnabled = false;
+int helloClubDaysAhead = 7;
+String helloClubCategoryFilter = "";
+int helloClubSyncHour = 0; // 0 = midnight
+unsigned long lastHelloClubSync = 0;
+int lastHelloClubSyncDay = -1; // Track which day we last synced
+
 // ==========================================================================
 // --- Function Declarations ---
 // ==========================================================================
@@ -81,6 +92,10 @@ void setupOTA();
 void setupWatchdog();
 void runSelfTest();
 String getFormattedTime12Hour();
+void loadHelloClubSettings();
+void saveHelloClubSettings();
+void checkDailyHelloClubSync();
+bool syncHelloClubEvents(bool skipConflictCheck = false);
 
 // ==========================================================================
 // --- Setup ---
@@ -123,6 +138,9 @@ void setup() {
 
     // Initialize schedule management
     scheduleManager.begin();
+
+    // Load Hello Club settings
+    loadHelloClubSettings();
 
     if (!connectToKnownWiFi()) {
         // If connection to a known network fails, start the captive portal
@@ -298,6 +316,9 @@ void loop() {
             }
         }
     }
+
+    // Check for daily Hello Club sync (once per minute)
+    checkDailyHelloClubSync();
 
     // Update timer state
     if (timer.update()) {
@@ -1221,4 +1242,176 @@ void runSelfTest() {
     } else {
         DEBUG_PRINTLN("Self-test FAILED - Some components may not function correctly\n");
     }
+}
+
+// ==========================================================================
+// --- Hello Club Integration ---
+// ==========================================================================
+
+/**
+ * Load Hello Club settings from NVS
+ */
+void loadHelloClubSettings() {
+    Preferences prefs;
+    if (prefs.begin("helloclub", true)) {
+        helloClubApiKey = prefs.getString("apiKey", "");
+        helloClubEnabled = prefs.getBool("enabled", false);
+        helloClubDaysAhead = prefs.getInt("daysAhead", 7);
+        helloClubCategoryFilter = prefs.getString("categoryFilter", "");
+        helloClubSyncHour = prefs.getInt("syncHour", 0);
+        prefs.end();
+
+        DEBUG_PRINTLN("Hello Club settings loaded:");
+        DEBUG_PRINTF("  Enabled: %s\n", helloClubEnabled ? "Yes" : "No");
+        DEBUG_PRINTF("  Days Ahead: %d\n", helloClubDaysAhead);
+        DEBUG_PRINTF("  Sync Hour: %d:00\n", helloClubSyncHour);
+        if (!helloClubCategoryFilter.isEmpty()) {
+            DEBUG_PRINTF("  Category Filter: %s\n", helloClubCategoryFilter.c_str());
+        }
+
+        // Set API key on client
+        helloClubClient.setApiKey(helloClubApiKey);
+    }
+}
+
+/**
+ * Save Hello Club settings to NVS
+ */
+void saveHelloClubSettings() {
+    Preferences prefs;
+    if (prefs.begin("helloclub", false)) {
+        prefs.putString("apiKey", helloClubApiKey);
+        prefs.putBool("enabled", helloClubEnabled);
+        prefs.putInt("daysAhead", helloClubDaysAhead);
+        prefs.putString("categoryFilter", helloClubCategoryFilter);
+        prefs.putInt("syncHour", helloClubSyncHour);
+        prefs.end();
+
+        DEBUG_PRINTLN("Hello Club settings saved");
+
+        // Update API key on client
+        helloClubClient.setApiKey(helloClubApiKey);
+    }
+}
+
+/**
+ * Check if it's time for daily Hello Club sync
+ * Called every minute from loop()
+ */
+void checkDailyHelloClubSync() {
+    if (!helloClubEnabled) {
+        return; // Hello Club integration disabled
+    }
+
+    if (!timeStatus()) {
+        return; // Wait for NTP sync
+    }
+
+    int currentHour = myTZ.hour();
+    int currentDay = myTZ.day();
+
+    // Check if we're at the configured sync hour and haven't synced today
+    if (currentHour == helloClubSyncHour && lastHelloClubSyncDay != currentDay) {
+        DEBUG_PRINTF("Daily Hello Club sync triggered (hour=%d, day=%d)\n", currentHour, currentDay);
+
+        if (syncHelloClubEvents(true)) { // Auto-import, skip conflict warnings
+            lastHelloClubSyncDay = currentDay;
+            lastHelloClubSync = millis();
+            DEBUG_PRINTLN("Hello Club sync completed successfully");
+        } else {
+            DEBUG_PRINTLN("Hello Club sync failed");
+        }
+    }
+}
+
+/**
+ * Sync events from Hello Club and create schedules
+ * @param skipConflictCheck If true, import even if conflicts exist (for daily sync)
+ * @return true if sync successful, false otherwise
+ */
+bool syncHelloClubEvents(bool skipConflictCheck) {
+    if (helloClubApiKey.isEmpty()) {
+        Serial.println("HelloClub: API key not configured");
+        return false;
+    }
+
+    // Fetch events from Hello Club
+    std::vector<HelloClubEvent> events;
+    if (!helloClubClient.fetchEvents(helloClubDaysAhead, helloClubCategoryFilter, events)) {
+        Serial.print("HelloClub: Failed to fetch events - ");
+        Serial.println(helloClubClient.getLastError());
+        return false;
+    }
+
+    Serial.printf("HelloClub: Found %d events to import\n", events.size());
+
+    int importedCount = 0;
+    int skippedCount = 0;
+
+    for (const auto& event : events) {
+        // Convert event to schedule
+        Schedule newSchedule;
+        if (!helloClubClient.convertEventToSchedule(event, "HelloClub", newSchedule)) {
+            Serial.printf("HelloClub: Failed to convert event '%s'\n", event.name.c_str());
+            skippedCount++;
+            continue;
+        }
+
+        // Check for conflicts (same day/time)
+        if (!skipConflictCheck) {
+            bool hasConflict = false;
+            std::vector<Schedule> existingSchedules = scheduleManager.getSchedules();
+
+            for (const auto& existing : existingSchedules) {
+                if (existing.dayOfWeek == newSchedule.dayOfWeek &&
+                    existing.startHour == newSchedule.startHour &&
+                    existing.startMinute == newSchedule.startMinute) {
+                    Serial.printf("HelloClub: Skipping '%s' - conflicts with existing schedule '%s'\n",
+                                  event.name.c_str(), existing.clubName.c_str());
+                    hasConflict = true;
+                    skippedCount++;
+                    break;
+                }
+            }
+
+            if (hasConflict) {
+                continue;
+            }
+        }
+
+        // Check if schedule with this ID already exists (update instead of duplicate)
+        Schedule existingSchedule;
+        if (scheduleManager.getScheduleById(newSchedule.id, existingSchedule)) {
+            // Update existing Hello Club schedule
+            if (scheduleManager.updateSchedule(newSchedule)) {
+                Serial.printf("HelloClub: Updated schedule '%s'\n", event.name.c_str());
+                importedCount++;
+            } else {
+                Serial.printf("HelloClub: Failed to update schedule '%s'\n", event.name.c_str());
+                skippedCount++;
+            }
+        } else {
+            // Add new schedule
+            if (scheduleManager.addSchedule(newSchedule)) {
+                Serial.printf("HelloClub: Imported '%s' (%s at %02d:%02d for %d min)\n",
+                              event.name.c_str(),
+                              newSchedule.dayOfWeek == 0 ? "Sun" :
+                              newSchedule.dayOfWeek == 1 ? "Mon" :
+                              newSchedule.dayOfWeek == 2 ? "Tue" :
+                              newSchedule.dayOfWeek == 3 ? "Wed" :
+                              newSchedule.dayOfWeek == 4 ? "Thu" :
+                              newSchedule.dayOfWeek == 5 ? "Fri" : "Sat",
+                              newSchedule.startHour,
+                              newSchedule.startMinute,
+                              newSchedule.durationMinutes);
+                importedCount++;
+            } else {
+                Serial.printf("HelloClub: Failed to add schedule '%s'\n", event.name.c_str());
+                skippedCount++;
+            }
+        }
+    }
+
+    Serial.printf("HelloClub: Import complete - %d imported, %d skipped\n", importedCount, skippedCount);
+    return (importedCount > 0);
 }
