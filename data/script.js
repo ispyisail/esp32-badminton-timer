@@ -916,6 +916,11 @@ function updateNTPStatus(data) {
         ntpStatusElement.className = 'ntp-status ntp-synced';
         ntpStatusElement.textContent = '✓';
 
+        // Update the clock display on main page with the time from NTP
+        if (data.time && timeElement) {
+            timeElement.textContent = data.time;
+        }
+
         // Build tooltip with detailed info
         let tooltip = 'Time synced via NTP';
         if (data.timezone) {
