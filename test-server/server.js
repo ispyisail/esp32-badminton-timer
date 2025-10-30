@@ -22,8 +22,11 @@ const wss = new WebSocket.Server({ server });
 
 // Mock data storage
 let timerRunning = false;
-let remainingTime = 0;
-let totalDuration = 120;
+let mainTimerRemaining = 0;  // Changed from remainingTime (in milliseconds)
+let breakTimerRemaining = 0;
+let totalDuration = 120000;  // Changed to milliseconds (120 seconds = 120000ms)
+let currentRound = 1;
+let numRounds = 1;
 let schedulingEnabled = false;
 let schedules = [
     {
@@ -138,12 +141,15 @@ wss.on('connection', (ws) => {
 
     console.log(`✅ Client ${clientId} connected`);
 
-    // Send initial state
+    // Send initial sync (matching ESP32 format)
     sendMessage(ws, {
-        event: 'timer_update',
-        running: timerRunning,
-        remainingTime: remainingTime,
-        totalDuration: totalDuration
+        event: 'sync',
+        mainTimerRemaining: mainTimerRemaining,
+        breakTimerRemaining: breakTimerRemaining,
+        serverMillis: Date.now(),
+        currentRound: currentRound,
+        numRounds: numRounds,
+        status: timerRunning ? 'RUNNING' : 'PAUSED'
     });
 
     sendMessage(ws, {
@@ -190,8 +196,16 @@ function handleMessage(clientId, ws, msg) {
                 return;
             }
             timerRunning = true;
-            remainingTime = totalDuration;
-            broadcast({ event: 'timer_update', running: true, remainingTime, totalDuration });
+            mainTimerRemaining = totalDuration;
+            broadcast({
+                event: 'sync',
+                mainTimerRemaining: mainTimerRemaining,
+                breakTimerRemaining: breakTimerRemaining,
+                serverMillis: Date.now(),
+                currentRound: currentRound,
+                numRounds: numRounds,
+                status: 'RUNNING'
+            });
             console.log('⏱️  Timer started');
             break;
 
@@ -201,7 +215,15 @@ function handleMessage(clientId, ws, msg) {
                 return;
             }
             timerRunning = false;
-            broadcast({ event: 'timer_update', running: false, remainingTime, totalDuration });
+            broadcast({
+                event: 'sync',
+                mainTimerRemaining: mainTimerRemaining,
+                breakTimerRemaining: breakTimerRemaining,
+                serverMillis: Date.now(),
+                currentRound: currentRound,
+                numRounds: numRounds,
+                status: 'PAUSED'
+            });
             console.log('⏸️  Timer paused');
             break;
 
@@ -211,8 +233,17 @@ function handleMessage(clientId, ws, msg) {
                 return;
             }
             timerRunning = false;
-            remainingTime = 0;
-            broadcast({ event: 'timer_update', running: false, remainingTime: 0, totalDuration });
+            mainTimerRemaining = 0;
+            breakTimerRemaining = 0;
+            broadcast({
+                event: 'sync',
+                mainTimerRemaining: 0,
+                breakTimerRemaining: 0,
+                serverMillis: Date.now(),
+                currentRound: currentRound,
+                numRounds: numRounds,
+                status: 'PAUSED'
+            });
             console.log('⏹️  Timer reset');
             break;
 
@@ -652,22 +683,29 @@ function broadcast(data) {
     });
 }
 
-// Simulate timer countdown
+// Simulate timer countdown (update every 100ms for smooth countdown)
 setInterval(() => {
-    if (timerRunning && remainingTime > 0) {
-        remainingTime--;
+    if (timerRunning && mainTimerRemaining > 0) {
+        mainTimerRemaining -= 100;  // Decrease by 100ms
+        if (mainTimerRemaining < 0) mainTimerRemaining = 0;
+
+        // Broadcast sync every 100ms
         broadcast({
-            event: 'timer_update',
-            running: true,
-            remainingTime,
-            totalDuration
+            event: 'sync',
+            mainTimerRemaining: mainTimerRemaining,
+            breakTimerRemaining: breakTimerRemaining,
+            serverMillis: Date.now(),
+            currentRound: currentRound,
+            numRounds: numRounds,
+            status: 'RUNNING'
         });
-        if (remainingTime === 0) {
+
+        if (mainTimerRemaining === 0) {
             timerRunning = false;
             console.log('⏰ Timer finished!');
         }
     }
-}, 1000);
+}, 100);  // Update every 100ms
 
 // Simulate NTP status updates
 setInterval(() => {
