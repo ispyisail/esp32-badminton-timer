@@ -142,6 +142,51 @@ function getNextWeekday(targetDay, hour, minute) {
 const clients = new Map();
 let nextClientId = 1;
 
+/**
+ * Get current time formatted in the selected timezone
+ */
+function getFormattedTime() {
+    try {
+        return new Date().toLocaleTimeString('en-US', {
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit',
+            hour12: true,
+            timeZone: currentTimezone
+        });
+    } catch (err) {
+        console.error(`Error formatting time for timezone ${currentTimezone}:`, err);
+        // Fallback to system time
+        return new Date().toLocaleTimeString('en-US', {
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit',
+            hour12: true
+        });
+    }
+}
+
+/**
+ * Get current date/time in ISO-like format for the selected timezone
+ */
+function getFormattedDateTime() {
+    try {
+        const date = new Date();
+        const dateStr = date.toLocaleDateString('en-CA', { timeZone: currentTimezone }); // YYYY-MM-DD
+        const timeStr = date.toLocaleTimeString('en-GB', {
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit',
+            hour12: false,
+            timeZone: currentTimezone
+        }); // HH:mm:ss
+        return `${dateStr} ${timeStr}`;
+    } catch (err) {
+        console.error(`Error formatting datetime for timezone ${currentTimezone}:`, err);
+        return new Date().toISOString().replace('T', ' ').substring(0, 19);
+    }
+}
+
 wss.on('connection', (ws) => {
     const clientId = nextClientId++;
     clients.set(clientId, {
@@ -163,7 +208,7 @@ wss.on('connection', (ws) => {
         event: 'state',
         state: {
             status: timerStatus,
-            time: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true }),
+            time: getFormattedTime(),
             currentRound: currentRound,
             numRounds: settings.numRounds,
             mainTimer: mainTimerRemaining,
@@ -185,9 +230,9 @@ wss.on('connection', (ws) => {
     sendMessage(ws, {
         event: 'ntp_status',
         synced: true,
-        time: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true }),
+        time: getFormattedTime(),
         timezone: currentTimezone,
-        dateTime: new Date().toISOString().replace('T', ' ').substring(0, 19),
+        dateTime: getFormattedDateTime(),
         autoSyncInterval: 30
     });
 
@@ -415,9 +460,9 @@ function handleMessage(clientId, ws, msg) {
             broadcast({
                 event: 'ntp_status',
                 synced: true,
-                time: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true }),
+                time: getFormattedTime(),
                 timezone: currentTimezone,
-                dateTime: new Date().toISOString().replace('T', ' ').substring(0, 19),
+                dateTime: getFormattedDateTime(),
                 autoSyncInterval: 30
             });
             console.log(`🌍 Timezone changed to: ${newTimezone}`);
@@ -790,9 +835,9 @@ setInterval(() => {
     broadcast({
         event: 'ntp_status',
         synced: true,
-        time: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true }),
+        time: getFormattedTime(),
         timezone: currentTimezone,
-        dateTime: new Date().toISOString().replace('T', ' ').substring(0, 19),
+        dateTime: getFormattedDateTime(),
         autoSyncInterval: 30
     });
 }, 5000);
