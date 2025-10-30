@@ -6,6 +6,7 @@ const schedulePage = document.getElementById('schedule-page');
 const loginModal = document.getElementById('login-modal');
 const enableDisplay = document.getElementById('enable-display');
 const timeElement = document.getElementById('time');
+const ntpStatusElement = document.getElementById('ntp-status');
 const roundCounterElement = document.getElementById('round-counter');
 const mainTimerDisplay = document.getElementById('main-timer-display');
 const breakTimerDisplay = document.getElementById('break-timer-display');
@@ -672,6 +673,34 @@ function updateConnectionStatus(connected) {
     }
 }
 
+function updateNTPStatus(data) {
+    if (!ntpStatusElement) return;
+
+    if (data.synced) {
+        ntpStatusElement.className = 'ntp-status ntp-synced';
+        ntpStatusElement.textContent = '✓';
+
+        // Build tooltip with detailed info
+        let tooltip = 'Time synced via NTP';
+        if (data.timezone) {
+            tooltip += `\nTimezone: ${data.timezone}`;
+        }
+        if (data.lastSync !== undefined) {
+            const lastSyncMin = Math.floor(data.lastSync / 60);
+            tooltip += `\nLast sync: ${lastSyncMin} min ago`;
+        }
+        if (data.nextSync !== undefined) {
+            const nextSyncMin = Math.floor(data.nextSync / 60);
+            tooltip += `\nNext sync: ${nextSyncMin} min`;
+        }
+        ntpStatusElement.title = tooltip;
+    } else {
+        ntpStatusElement.className = 'ntp-status ntp-error';
+        ntpStatusElement.textContent = '✗';
+        ntpStatusElement.title = 'Time not synced - schedules may not work correctly';
+    }
+}
+
 function initializeEventListeners() {
     settingsIcon.addEventListener('click', () => showSettingsPage(true));
     saveSettingsBtn.addEventListener('click', validateAndSaveAllSettings);
@@ -1026,6 +1055,10 @@ function connectWebSocket() {
                     schedulingEnabled ? "Scheduling enabled" : "Scheduling disabled",
                     "success"
                 );
+                break;
+
+            case 'ntp_status':
+                updateNTPStatus(data);
                 break;
 
             case 'error':

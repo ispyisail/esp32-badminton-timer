@@ -43,6 +43,11 @@ std::map<uint32_t, UserRole> authenticatedClients;
 // Periodic Sync
 unsigned long lastSyncBroadcast = 0;
 
+// NTP Sync Status Tracking
+bool lastNTPSyncStatus = false;
+unsigned long lastNTPStatusCheck = 0;
+const unsigned long NTP_CHECK_INTERVAL = 5000; // Check every 5 seconds
+
 // ==========================================================================
 // --- Function Declarations ---
 // ==========================================================================
@@ -54,6 +59,8 @@ void sendSettingsUpdate(AsyncWebSocketClient *client = nullptr);
 void sendSync(AsyncWebSocketClient *client);
 void sendError(AsyncWebSocketClient *client, const String& message);
 void sendAuthRequest(AsyncWebSocketClient *client);
+void sendNTPStatus(AsyncWebSocketClient *client = nullptr);
+void checkAndBroadcastNTPStatus();
 void handleWebSocketMessage(void *arg, uint8_t *data, size_t len, AsyncWebSocketClient *client);
 void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventType type, void *arg, uint8_t *data, size_t len);
 void setupOTA();
@@ -188,6 +195,9 @@ void loop() {
     events(); // Process ezTime events for time synchronization
     ArduinoOTA.handle(); // Handle Over-the-Air update requests
     ws.cleanupClients(); // Clean up disconnected WebSocket clients
+
+    // Check and broadcast NTP sync status changes
+    checkAndBroadcastNTPStatus();
 
     // Update siren state (non-blocking)
     siren.update();
@@ -424,6 +434,51 @@ void sendAuthRequest(AsyncWebSocketClient *client) {
     String output;
     serializeJson(doc, output);
     client->text(output);
+}
+
+void sendNTPStatus(AsyncWebSocketClient *client) {
+    StaticJsonDocument<512> doc;
+    doc["event"] = "ntp_status";
+
+    // Check if time has been set (ezTime sets year to > 1970 when synced)
+    bool synced = myTZ.year() > 2020;
+    doc["synced"] = synced;
+    doc["time"] = synced ? getFormattedTime12Hour() : "Not synced";
+
+    // Get last sync info from ezTime
+    if (synced) {
+        doc["lastSync"] = lastSync();  // Returns seconds since last NTP sync
+        doc["nextSync"] = nextSync();  // Returns seconds until next NTP sync
+        doc["timezone"] = "Pacific/Auckland";
+    }
+
+    String output;
+    serializeJson(doc, output);
+
+    if (client) {
+        client->text(output);
+    } else {
+        ws.textAll(output);
+    }
+}
+
+void checkAndBroadcastNTPStatus() {
+    unsigned long now = millis();
+
+    // Check every NTP_CHECK_INTERVAL milliseconds
+    if (now - lastNTPStatusCheck < NTP_CHECK_INTERVAL) {
+        return;
+    }
+
+    lastNTPStatusCheck = now;
+
+    // Check if sync status changed
+    bool currentSyncStatus = (myTZ.year() > 2020);
+
+    if (currentSyncStatus != lastNTPSyncStatus) {
+        lastNTPSyncStatus = currentSyncStatus;
+        sendNTPStatus(nullptr);  // Broadcast to all clients
+    }
 }
 
 void handleWebSocketMessage(void *arg, uint8_t *data, size_t len, AsyncWebSocketClient *client) {
@@ -808,6 +863,8 @@ void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventTyp
             } else {
                 sendStateUpdate(client);
             }
+            // Send NTP sync status
+            sendNTPStatus(client);
             break;
 
         case WS_EVT_DISCONNECT:

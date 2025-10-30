@@ -131,6 +131,37 @@ body::before {
     border-radius: var(--border-radius-sm);
 }
 
+/* NTP Sync Status Indicator */
+.ntp-status {
+    font-size: 0.9em;
+    margin-left: 4px;
+    transition: all var(--transition-fast);
+    display: inline-block;
+}
+
+.ntp-status.ntp-syncing {
+    color: #fbbf24;
+    animation: pulse 2s ease-in-out infinite;
+}
+
+.ntp-status.ntp-synced {
+    color: var(--success-color);
+}
+
+.ntp-status.ntp-error {
+    color: var(--danger-color);
+    animation: pulse 1s ease-in-out infinite;
+}
+
+@keyframes pulse {
+    0%, 100% {
+        opacity: 1;
+    }
+    50% {
+        opacity: 0.5;
+    }
+}
+
 .icon-button {
     cursor: pointer;
     padding: 8px;
