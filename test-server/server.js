@@ -50,6 +50,8 @@ let schedules = [
     }
 ];
 
+let currentTimezone = 'Pacific/Auckland'; // Default timezone
+
 let operators = [
     { username: "operator1", password: "pass123" },
     { username: "operator2", password: "test456" }
@@ -124,6 +126,18 @@ function getNextWeekday(targetDay, hour, minute) {
     return result.toISOString();
 }
 
+// Helper function to get formatted time in selected timezone
+function getFormattedTime() {
+    const now = new Date();
+    return now.toLocaleTimeString('en-US', {
+        timeZone: currentTimezone,
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: true
+    });
+}
+
 // Client tracking
 const clients = new Map();
 let nextClientId = 1;
@@ -149,8 +163,8 @@ wss.on('connection', (ws) => {
     sendMessage(ws, {
         event: 'ntp_status',
         synced: true,
-        time: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true }),
-        timezone: 'Pacific/Auckland',
+        time: getFormattedTime(),
+        timezone: currentTimezone,
         dateTime: new Date().toISOString().replace('T', ' ').substring(0, 19),
         autoSyncInterval: 30
     });
@@ -355,6 +369,34 @@ function handleMessage(clientId, ws, msg) {
             schedulingEnabled = false;
             sendMessage(ws, { event: 'factory_reset_complete' });
             console.log('🔄 Factory reset completed');
+            break;
+
+        case 'set_timezone':
+            if (client.role !== 'admin') {
+                sendError(ws, 'Permission denied - admin only');
+                return;
+            }
+            const newTimezone = msg.timezone;
+            if (!newTimezone) {
+                sendError(ws, 'Timezone required');
+                return;
+            }
+            currentTimezone = newTimezone;
+            sendMessage(ws, {
+                event: 'timezone_changed',
+                timezone: currentTimezone,
+                message: 'Timezone updated successfully. Please refresh schedules.'
+            });
+            // Broadcast updated NTP status with new timezone to all clients
+            broadcast({
+                event: 'ntp_status',
+                synced: true,
+                time: getFormattedTime(),
+                timezone: currentTimezone,
+                dateTime: new Date().toISOString().replace('T', ' ').substring(0, 19),
+                autoSyncInterval: 30
+            });
+            console.log(`🌍 Timezone changed to: ${currentTimezone}`);
             break;
 
         // Hello Club Integration
@@ -669,13 +711,13 @@ setInterval(() => {
     }
 }, 1000);
 
-// Simulate NTP status updates
+// Simulate NTP status updates (every 5 seconds)
 setInterval(() => {
     broadcast({
         event: 'ntp_status',
         synced: true,
-        time: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true }),
-        timezone: 'Pacific/Auckland',
+        time: getFormattedTime(),
+        timezone: currentTimezone,
         dateTime: new Date().toISOString().replace('T', ' ').substring(0, 19),
         autoSyncInterval: 30
     });

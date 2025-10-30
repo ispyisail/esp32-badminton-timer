@@ -931,6 +931,11 @@ function updateNTPStatus(data) {
             tooltip += `\nAuto-sync: every ${data.autoSyncInterval} min`;
         }
         ntpStatusElement.title = tooltip;
+
+        // Update the time display with the timezone-adjusted time from the server
+        if (data.time && timeElement) {
+            timeElement.textContent = data.time;
+        }
     } else {
         ntpStatusElement.className = 'ntp-status ntp-error';
         ntpStatusElement.textContent = '✗';
