@@ -41,6 +41,19 @@ DNSServer dns;
 std::map<uint32_t, UserRole> authenticatedClients;
 std::map<uint32_t, String> authenticatedUsernames;
 
+// Rate Limiting
+struct RateLimitInfo {
+    unsigned long windowStart;
+    int messageCount;
+};
+std::map<uint32_t, RateLimitInfo> clientRateLimits;
+const int MAX_MESSAGES_PER_SECOND = 10;
+const unsigned long RATE_LIMIT_WINDOW = 1000; // 1 second
+
+// Session Timeout
+std::map<uint32_t, unsigned long> clientLastActivity;
+const unsigned long SESSION_TIMEOUT = 30 * 60 * 1000; // 30 minutes
+
 // Periodic Sync
 unsigned long lastSyncBroadcast = 0;
 
@@ -202,6 +215,49 @@ void loop() {
 
     // Update siren state (non-blocking)
     siren.update();
+
+    // Check for session timeouts (every 60 seconds)
+    static unsigned long lastSessionCheck = 0;
+    if (millis() - lastSessionCheck >= 60000) { // Check every minute
+        lastSessionCheck = millis();
+        unsigned long now = millis();
+
+        // Check each client for session timeout
+        for (auto it = clientLastActivity.begin(); it != clientLastActivity.end(); ) {
+            uint32_t clientId = it->first;
+            unsigned long lastActivity = it->second;
+
+            // Check if session timed out (30 minutes of inactivity)
+            if (now - lastActivity >= SESSION_TIMEOUT) {
+                // Only timeout authenticated sessions (not viewers)
+                if (authenticatedClients.find(clientId) != authenticatedClients.end() &&
+                    authenticatedClients[clientId] != VIEWER) {
+
+                    Serial.printf("Session timeout for client #%u\n", clientId);
+
+                    // Downgrade to viewer (don't disconnect, just require re-auth)
+                    authenticatedClients[clientId] = VIEWER;
+                    authenticatedUsernames.erase(clientId);
+
+                    // Send timeout notification
+                    StaticJsonDocument<128> timeoutDoc;
+                    timeoutDoc["event"] = "session_timeout";
+                    timeoutDoc["message"] = "Session expired. Please login again.";
+                    String output;
+                    serializeJson(timeoutDoc, output);
+
+                    AsyncWebSocketClient *timeoutClient = ws.client(clientId);
+                    if (timeoutClient) {
+                        timeoutClient->text(output);
+                    }
+                }
+
+                it = clientLastActivity.erase(it);
+            } else {
+                ++it;
+            }
+        }
+    }
 
     // Check for scheduled timer starts (once per minute)
     static unsigned long lastScheduleCheck = 0;
@@ -441,14 +497,19 @@ void sendNTPStatus(AsyncWebSocketClient *client) {
     StaticJsonDocument<512> doc;
     doc["event"] = "ntp_status";
 
-    // Check if time has been set (ezTime sets year to > 1970 when synced)
-    bool synced = myTZ.year() > 2020;
+    // Check if time is valid - more robust than just year check
+    // ezTime: year() returns reasonable value AND hour/minute are valid
+    bool synced = (myTZ.year() > 2020 && myTZ.year() < 2100 &&
+                   myTZ.month() >= 1 && myTZ.month() <= 12 &&
+                   myTZ.day() >= 1 && myTZ.day() <= 31);
+
     doc["synced"] = synced;
     doc["time"] = synced ? getFormattedTime12Hour() : "Not synced";
 
     // Add timezone info if synced
     if (synced) {
         doc["timezone"] = "Pacific/Auckland";
+        doc["dateTime"] = myTZ.dateTime("Y-m-d H:i:s"); // ISO format for verification
         // Note: ezTime syncs every 30 minutes automatically via events() call
         doc["autoSyncInterval"] = 30; // minutes
     }
@@ -473,8 +534,10 @@ void checkAndBroadcastNTPStatus() {
 
     lastNTPStatusCheck = now;
 
-    // Check if sync status changed
-    bool currentSyncStatus = (myTZ.year() > 2020);
+    // Check if sync status changed - use same robust check as sendNTPStatus
+    bool currentSyncStatus = (myTZ.year() > 2020 && myTZ.year() < 2100 &&
+                              myTZ.month() >= 1 && myTZ.month() <= 12 &&
+                              myTZ.day() >= 1 && myTZ.day() <= 31);
 
     if (currentSyncStatus != lastNTPSyncStatus) {
         lastNTPSyncStatus = currentSyncStatus;
@@ -483,12 +546,39 @@ void checkAndBroadcastNTPStatus() {
 }
 
 void handleWebSocketMessage(void *arg, uint8_t *data, size_t len, AsyncWebSocketClient *client) {
+    // Rate limiting check
+    unsigned long now = millis();
+    uint32_t clientId = client->id();
+
+    if (clientRateLimits.find(clientId) == clientRateLimits.end()) {
+        clientRateLimits[clientId] = {now, 0};
+    }
+
+    RateLimitInfo& rateLimit = clientRateLimits[clientId];
+
+    // Reset window if it expired
+    if (now - rateLimit.windowStart >= RATE_LIMIT_WINDOW) {
+        rateLimit.windowStart = now;
+        rateLimit.messageCount = 0;
+    }
+
+    rateLimit.messageCount++;
+
+    // Check if rate limit exceeded
+    if (rateLimit.messageCount > MAX_MESSAGES_PER_SECOND) {
+        Serial.printf("Rate limit exceeded for client #%u (%d msgs/sec)\n", clientId, rateLimit.messageCount);
+        sendError(client, "ERR_RATE_LIMIT: Too many requests. Please slow down.");
+        return;
+    }
+
+    // Update last activity for session timeout
+    clientLastActivity[clientId] = now;
+
     StaticJsonDocument<1024> doc;
     DeserializationError error = deserializeJson(doc, data, len);
     if (error) {
-        Serial.print(F("deserializeJson() failed: "));
-        Serial.println(error.c_str());
-        sendError(client, "Invalid JSON format");
+        Serial.println(F("deserializeJson() failed"));
+        sendError(client, "ERR_INVALID_JSON: Invalid message format");
         return;
     }
 
@@ -505,23 +595,42 @@ void handleWebSocketMessage(void *arg, uint8_t *data, size_t len, AsyncWebSocket
         String username = doc["username"] | "";
         String password = doc["password"] | "";
 
+        // Explicit viewer mode (empty credentials)
+        if (username.isEmpty() && password.isEmpty()) {
+            authenticatedClients[client->id()] = VIEWER;
+            authenticatedUsernames[client->id()] = "Viewer";
+
+            StaticJsonDocument<256> viewerDoc;
+            viewerDoc["event"] = "viewer_mode";
+            viewerDoc["role"] = "viewer";
+            viewerDoc["username"] = "Viewer";
+            viewerDoc["message"] = "Continuing as viewer (read-only access)";
+            String output;
+            serializeJson(viewerDoc, output);
+            client->text(output);
+
+            // Send initial state for viewers
+            sendSettingsUpdate(client);
+            if (timer.getState() == RUNNING || timer.getState() == PAUSED) {
+                sendSync(client);
+            } else {
+                sendStateUpdate(client);
+            }
+            return;
+        }
+
+        // Attempt authentication with credentials
         UserRole role = userManager.authenticate(username, password);
 
-        if (role != VIEWER || (username.isEmpty() && password.isEmpty())) {
-            // Successful authentication or viewer mode
+        if (role != VIEWER) {
+            // Successful authentication as operator or admin
             authenticatedClients[client->id()] = role;
-
-            // Store username for permission checks
-            if (role == ADMIN || role == OPERATOR) {
-                authenticatedUsernames[client->id()] = username;
-            } else {
-                authenticatedUsernames[client->id()] = "Viewer";
-            }
+            authenticatedUsernames[client->id()] = username;
 
             StaticJsonDocument<256> authDoc;
             authDoc["event"] = "auth_success";
-            authDoc["role"] = (role == ADMIN) ? "admin" : (role == OPERATOR) ? "operator" : "viewer";
-            authDoc["username"] = (role == VIEWER) ? "Viewer" : username;
+            authDoc["role"] = (role == ADMIN) ? "admin" : "operator";
+            authDoc["username"] = username;
             String output;
             serializeJson(authDoc, output);
             client->text(output);
@@ -534,7 +643,8 @@ void handleWebSocketMessage(void *arg, uint8_t *data, size_t len, AsyncWebSocket
                 sendStateUpdate(client);
             }
         } else {
-            sendError(client, "Invalid credentials");
+            // Authentication failed - credentials provided but incorrect
+            sendError(client, "ERR_AUTH_FAILED: Invalid username or password");
         }
         return;
     }
@@ -978,6 +1088,8 @@ void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventTyp
             Serial.printf("WebSocket client #%u disconnected\n", client->id());
             authenticatedClients.erase(client->id()); // Clean up authentication state
             authenticatedUsernames.erase(client->id()); // Clean up username mapping
+            clientRateLimits.erase(client->id()); // Clean up rate limit tracking
+            clientLastActivity.erase(client->id()); // Clean up session timeout tracking
             break;
 
         case WS_EVT_DATA:

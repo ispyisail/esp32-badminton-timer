@@ -93,20 +93,20 @@ void UserManager::setDefaults() {
 UserRole UserManager::authenticate(const String& username, const String& password) {
     // Check admin
     if (username == adminUsername && password == adminPassword) {
-        Serial.printf("User '%s' authenticated as ADMIN\n", username.c_str());
+        Serial.println("User authenticated as ADMIN");
         return ADMIN;
     }
 
     // Check operators
     for (const auto& op : operators) {
         if (op.username == username && op.password == password) {
-            Serial.printf("User '%s' authenticated as OPERATOR\n", username.c_str());
+            Serial.println("User authenticated as OPERATOR");
             return OPERATOR;
         }
     }
 
     // Authentication failed
-    Serial.printf("Authentication failed for user '%s'\n", username.c_str());
+    Serial.println("Authentication failed");
     return VIEWER;
 }
 
@@ -123,9 +123,15 @@ bool UserManager::addOperator(const String& username, const String& password) {
         return false;
     }
 
+    // Check minimum password length (security requirement)
+    if (password.length() < 4) {
+        Serial.println("Cannot add operator: password must be at least 4 characters");
+        return false;
+    }
+
     // Check if username already exists
     if (usernameExists(username)) {
-        Serial.printf("Cannot add operator: username '%s' already exists\n", username.c_str());
+        Serial.println("Cannot add operator: username already exists");
         return false;
     }
 
@@ -161,6 +167,12 @@ bool UserManager::changePassword(const String& username, const String& oldPasswo
     // Check new password is not empty
     if (newPassword.length() == 0) {
         Serial.println("Cannot change password: new password is empty");
+        return false;
+    }
+
+    // Check minimum password length (security requirement)
+    if (newPassword.length() < 4) {
+        Serial.println("Cannot change password: new password must be at least 4 characters");
         return false;
     }
 
