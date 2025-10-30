@@ -9,60 +9,564 @@
 <body>
     <div class="container">
         <div id="main-page">
+            <!-- Header -->
+            <header class="header">
+                <div class="header-left">
+                    <div id="settings-icon" class="icon-button" title="Settings">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <circle cx="12" cy="12" r="3"></circle>
+                            <path d="M12 1v6m0 6v6m-6-6h6m6 0h-6"></path>
+                        </svg>
+                    </div>
+                    <div id="schedule-icon" class="icon-button operator-only" title="Schedules">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect>
+                            <line x1="16" y1="2" x2="16" y2="6"></line>
+                            <line x1="8" y1="2" x2="8" y2="6"></line>
+                            <line x1="3" y1="10" x2="21" y2="10"></line>
+                        </svg>
+                    </div>
+                    <div id="user-icon" class="icon-button" title="Login / User Management">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
+                            <circle cx="12" cy="7" r="4"></circle>
+                        </svg>
+                    </div>
+                    <div id="helloclub-icon" class="icon-button admin-only" title="Hello Club Integration">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+                            <circle cx="9" cy="7" r="4"></circle>
+                            <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
+                            <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
+                        </svg>
+                    </div>
+                </div>
+                <div class="header-title">
+                    <h1>Badminton Timer</h1>
+                    <div class="connection-badge">
+                        <span id="connection-status" class="status-disconnected" title="Disconnected">●</span>
+                        <span class="connection-text">Connecting...</span>
+                    </div>
+                </div>
+                <div class="clock-display">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="12" cy="12" r="10"></circle>
+                        <polyline points="12 6 12 12 16 14"></polyline>
+                    </svg>
+                    <span id="time">--:--:--</span>
+                    <span id="ntp-status" class="ntp-status ntp-syncing" title="Syncing with time server...">⏳</span>
+                </div>
+            </header>
+
+            <!-- Main Display -->
             <div id="enable-display" class="status-idle">
-                <div class="top-bar">
-                    <div id="settings-icon">☰</div>
-                    <div id="round-counter">Round 1 of 3</div>
-                    <div id="time">--:--:--</div>
+                <div class="round-info">
+                    <span id="round-counter">Round 1 of 3</span>
                 </div>
-                <div class="main-timer">
-                    <div id="main-timer-display">00:00</div>
+
+                <div class="timer-display-card">
+                    <div class="timer-label">Game Timer</div>
+                    <div class="main-timer">
+                        <div id="main-timer-display">00:00</div>
+                    </div>
                 </div>
-                <div class="break-timer">
-                    <div id="break-timer-display">00:00</div>
+
+                <div class="break-timer-card">
+                    <div class="timer-label">Break Timer</div>
+                    <div class="break-timer">
+                        <div id="break-timer-display">00:00</div>
+                    </div>
                 </div>
             </div>
+
+            <!-- Controls -->
             <div class="controls">
-                <button id="start-btn">Start</button>
-                <button id="pause-btn">Pause/Resume</button>
-                <button id="reset-btn">Stop/Reset</button>
+                <button id="start-btn" class="btn btn-success">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                        <polygon points="5 3 19 12 5 21 5 3"></polygon>
+                    </svg>
+                    <span>Start</span>
+                </button>
+                <button id="pause-btn" class="btn btn-warning">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                        <rect x="6" y="4" width="4" height="16"></rect>
+                        <rect x="14" y="4" width="4" height="16"></rect>
+                    </svg>
+                    <span>Pause</span>
+                </button>
+                <button id="reset-btn" class="btn btn-danger">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                        <rect x="6" y="6" width="12" height="12"></rect>
+                    </svg>
+                    <span>Reset</span>
+                </button>
             </div>
-            <div class="main-settings">
-                <div class="setting">
-                    <label for="game-duration">Game Duration (min):</label>
-                    <input type="number" id="game-duration" value="21">
-                </div>
-                <div class="setting">
-                    <label for="num-rounds">Number of Rounds:</label>
-                    <input type="number" id="num-rounds" value="3">
+
+            <!-- Quick Settings -->
+            <div class="quick-settings">
+                <div class="settings-card">
+                    <div class="setting-item">
+                        <label for="game-duration">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <circle cx="12" cy="12" r="10"></circle>
+                                <polyline points="12 6 12 12 16 14"></polyline>
+                            </svg>
+                            Game Duration
+                        </label>
+                        <div class="input-group">
+                            <input type="number" id="game-duration" value="21" min="1" max="120">
+                            <span class="unit">min</span>
+                        </div>
+                    </div>
+                    <div class="setting-item">
+                        <label for="num-rounds">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path>
+                            </svg>
+                            Rounds
+                        </label>
+                        <div class="input-group">
+                            <input type="number" id="num-rounds" value="3" min="1" max="20">
+                            <span class="unit">sets</span>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>
 
+        <!-- Settings Page -->
         <div id="settings-page" class="hidden">
-            <h2>Advanced Settings</h2>
+            <header class="header">
+                <div class="header-title">
+                    <h1>Advanced Settings</h1>
+                </div>
+            </header>
+
             <div class="settings-container">
-                <div class="setting">
-                    <label for="break-time">Break Time (sec):</label>
-                    <input type="number" id="break-time" value="60">
+                <div class="settings-card">
+                    <h3>Timer Settings</h3>
+                    <div class="setting-item">
+                        <label for="break-time">Break Time</label>
+                        <div class="input-group">
+                            <input type="number" id="break-time" value="60" min="1" max="3600">
+                            <span class="unit">sec</span>
+                        </div>
+                    </div>
+                    <div class="setting-item">
+                        <label for="break-timer-enable">Enable Break Timer</label>
+                        <label class="switch">
+                            <input type="checkbox" id="break-timer-enable" checked>
+                            <span class="slider"></span>
+                        </label>
+                    </div>
                 </div>
-                <div class="setting">
-                    <label for="break-timer-enable">Enable Break Timer:</label>
-                    <input type="checkbox" id="break-timer-enable" checked>
-                </div>
-                <div class="setting">
-                    <label for="siren-length">Siren Length (ms):</label>
-                    <input type="number" id="siren-length" value="1000">
-                </div>
-                <div class="setting">
-                    <label for="siren-pause">Siren Pause (ms):</label>
-                    <input type="number" id="siren-pause" value="1000">
+
+                <div class="settings-card">
+                    <h3>Siren Settings</h3>
+                    <div class="setting-item">
+                        <label for="siren-length">Blast Length</label>
+                        <div class="input-group">
+                            <input type="number" id="siren-length" value="1000" min="100" max="10000">
+                            <span class="unit">ms</span>
+                        </div>
+                    </div>
+                    <div class="setting-item">
+                        <label for="siren-pause">Blast Pause</label>
+                        <div class="input-group">
+                            <input type="number" id="siren-pause" value="1000" min="100" max="10000">
+                            <span class="unit">ms</span>
+                        </div>
+                    </div>
                 </div>
             </div>
+
             <div class="settings-controls">
-                <button id="save-settings-btn">Save & Close</button>
+                <button id="save-settings-btn" class="btn btn-primary btn-large">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polyline points="20 6 9 17 4 12"></polyline>
+                    </svg>
+                    <span>Save & Close</span>
+                </button>
             </div>
         </div>
+        <!-- Login Modal -->
+        <div id="login-modal" class="modal hidden">
+            <div class="modal-content">
+                <h2>Login</h2>
+                <p class="modal-subtitle">Enter credentials or continue as viewer</p>
+                <div class="login-form">
+                    <div class="input-field">
+                        <label for="login-username">Username</label>
+                        <input type="text" id="login-username" placeholder="admin or operator name">
+                    </div>
+                    <div class="input-field">
+                        <label for="login-password">Password</label>
+                        <input type="password" id="login-password" placeholder="Password">
+                    </div>
+                    <div class="modal-buttons">
+                        <button id="login-btn" class="btn btn-primary btn-large">
+                            <span>Login</span>
+                        </button>
+                        <button id="viewer-btn" class="btn btn-secondary btn-large">
+                            <span>Continue as Viewer</span>
+                        </button>
+                    </div>
+                </div>
+                <div id="current-user-info" class="user-info hidden">
+                    <span class="user-role-badge">Viewer</span>
+                    <span class="user-name">Viewing Mode</span>
+                    <button id="login-different-btn" class="btn btn-small">Login Different User</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- User Management Page (Admin Only) -->
+        <div id="user-management-page" class="hidden">
+            <header class="header">
+                <div class="header-title">
+                    <h1>User Management</h1>
+                </div>
+            </header>
+
+            <div class="settings-container">
+                <div class="settings-card">
+                    <h3>Add Operator</h3>
+                    <div class="setting-item">
+                        <input type="text" id="new-operator-username" placeholder="Username" class="full-width-input">
+                    </div>
+                    <div class="setting-item">
+                        <input type="password" id="new-operator-password" placeholder="Password" class="full-width-input">
+                    </div>
+                    <button id="add-operator-btn" class="btn btn-success btn-large">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <line x1="12" y1="5" x2="12" y2="19"></line>
+                            <line x1="5" y1="12" x2="19" y2="12"></line>
+                        </svg>
+                        <span>Add Operator</span>
+                    </button>
+                </div>
+
+                <div class="settings-card">
+                    <h3>Operators List</h3>
+                    <div id="operators-list" class="operators-list">
+                        <p class="text-secondary">Loading...</p>
+                    </div>
+                </div>
+
+                <div class="settings-card">
+                    <h3>Change Password</h3>
+                    <div class="setting-item">
+                        <input type="password" id="change-old-password" placeholder="Current Password" class="full-width-input">
+                    </div>
+                    <div class="setting-item">
+                        <input type="password" id="change-new-password" placeholder="New Password" class="full-width-input">
+                    </div>
+                    <button id="change-password-btn" class="btn btn-warning btn-large">
+                        <span>Change My Password</span>
+                    </button>
+                </div>
+
+                <div class="settings-card danger-zone">
+                    <h3>Danger Zone</h3>
+                    <p class="text-secondary">Factory reset will restore all settings and user accounts to defaults.</p>
+                    <button id="factory-reset-btn" class="btn btn-danger btn-large">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polyline points="1 4 1 10 7 10"></polyline>
+                            <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path>
+                        </svg>
+                        <span>Factory Reset</span>
+                    </button>
+                </div>
+            </div>
+
+            <div class="settings-controls">
+                <button id="close-user-management-btn" class="btn btn-primary btn-large">
+                    <span>Close</span>
+                </button>
+            </div>
+        </div>
+
+        <!-- Schedule Management Page (Operator+) -->
+        <div id="schedule-page" class="hidden">
+            <header class="header">
+                <div class="header-title">
+                    <h1>Schedule Management</h1>
+                </div>
+            </header>
+
+            <div class="schedule-container">
+                <!-- Scheduling System Toggle -->
+                <div class="schedule-header">
+                    <div class="schedule-toggle-card">
+                        <div class="toggle-info">
+                            <h3>Automatic Scheduling</h3>
+                            <p class="text-secondary">Enable automatic timer control based on schedules</p>
+                        </div>
+                        <label class="switch">
+                            <input type="checkbox" id="scheduling-enabled-toggle">
+                            <span class="slider"></span>
+                        </label>
+                    </div>
+                </div>
+
+                <!-- Club Filter -->
+                <div class="settings-card">
+                    <div class="setting-item">
+                        <label for="schedule-club-filter">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+                                <circle cx="9" cy="7" r="4"></circle>
+                                <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
+                                <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
+                            </svg>
+                            Filter by Club
+                        </label>
+                        <input type="text" id="schedule-club-filter" placeholder="Enter club name" class="full-width-input">
+                    </div>
+                    <button id="load-schedules-btn" class="btn btn-primary btn-large">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polyline points="23 4 23 10 17 10"></polyline>
+                            <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
+                        </svg>
+                        <span>Load Schedules</span>
+                    </button>
+                </div>
+
+                <!-- Weekly Calendar -->
+                <div class="weekly-calendar">
+                    <h3>Weekly Schedule Calendar</h3>
+                    <div class="calendar-grid">
+                        <div class="calendar-header">
+                            <div class="time-column">Time</div>
+                            <div class="day-column">Sun</div>
+                            <div class="day-column">Mon</div>
+                            <div class="day-column">Tue</div>
+                            <div class="day-column">Wed</div>
+                            <div class="day-column">Thu</div>
+                            <div class="day-column">Fri</div>
+                            <div class="day-column">Sat</div>
+                        </div>
+                        <div id="calendar-body" class="calendar-body">
+                            <!-- Calendar hours will be generated by JavaScript -->
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Add/Edit Schedule Form -->
+                <div class="settings-card">
+                    <h3 id="schedule-form-title">Add New Schedule</h3>
+                    <input type="hidden" id="edit-schedule-id">
+
+                    <div class="setting-item">
+                        <label for="schedule-club-name">Club Name</label>
+                        <input type="text" id="schedule-club-name" placeholder="e.g., Monday Night Players" class="full-width-input">
+                    </div>
+
+                    <div class="setting-item">
+                        <label for="schedule-day">Day of Week</label>
+                        <select id="schedule-day" class="full-width-input">
+                            <option value="0">Sunday</option>
+                            <option value="1">Monday</option>
+                            <option value="2">Tuesday</option>
+                            <option value="3">Wednesday</option>
+                            <option value="4">Thursday</option>
+                            <option value="5">Friday</option>
+                            <option value="6">Saturday</option>
+                        </select>
+                    </div>
+
+                    <div class="setting-item">
+                        <label for="schedule-time">Start Time</label>
+                        <div class="time-input-group">
+                            <input type="number" id="schedule-hour" min="0" max="23" placeholder="HH" class="time-input">
+                            <span class="time-separator">:</span>
+                            <input type="number" id="schedule-minute" min="0" max="59" placeholder="MM" class="time-input">
+                        </div>
+                    </div>
+
+                    <div class="setting-item">
+                        <label for="schedule-duration">Duration (minutes)</label>
+                        <input type="number" id="schedule-duration" min="1" max="180" value="60" class="full-width-input">
+                    </div>
+
+                    <div class="setting-item">
+                        <label for="schedule-enabled">Enabled</label>
+                        <label class="switch">
+                            <input type="checkbox" id="schedule-enabled" checked>
+                            <span class="slider"></span>
+                        </label>
+                    </div>
+
+                    <div class="schedule-form-buttons">
+                        <button id="save-schedule-btn" class="btn btn-success btn-large">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <polyline points="20 6 9 17 4 12"></polyline>
+                            </svg>
+                            <span>Save Schedule</span>
+                        </button>
+                        <button id="cancel-schedule-btn" class="btn btn-secondary btn-large">
+                            <span>Cancel</span>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Schedules List -->
+                <div class="settings-card">
+                    <h3>Current Schedules</h3>
+                    <div id="schedules-list" class="schedules-list">
+                        <p class="text-secondary">Loading schedules...</p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="settings-controls">
+                <button id="close-schedule-btn" class="btn btn-primary btn-large">
+                    <span>Close</span>
+                </button>
+            </div>
+        </div>
+
+        <!-- Hello Club Integration Page (Admin Only) -->
+        <div id="helloclub-page" class="hidden">
+            <header class="header">
+                <div class="header-title">
+                    <h1>Hello Club Integration</h1>
+                </div>
+            </header>
+
+            <div class="settings-container">
+                <div class="settings-card">
+                    <h3>Configuration</h3>
+                    <div class="setting-item">
+                        <label for="helloclub-enabled">Enable Hello Club Sync</label>
+                        <label class="switch">
+                            <input type="checkbox" id="helloclub-enabled">
+                            <span class="slider"></span>
+                        </label>
+                    </div>
+                    <div class="setting-item">
+                        <label for="helloclub-api-key">API Key</label>
+                        <input type="password" id="helloclub-api-key" placeholder="Enter Hello Club API key" class="full-width-input">
+                    </div>
+                    <div class="setting-item">
+                        <label for="helloclub-days-ahead">Days to Look Ahead</label>
+                        <div class="input-group">
+                            <input type="number" id="helloclub-days-ahead" value="7" min="1" max="30">
+                            <span class="unit">days</span>
+                        </div>
+                    </div>
+                    <div class="setting-item">
+                        <label for="helloclub-sync-hour">Daily Sync Time</label>
+                        <select id="helloclub-sync-hour" class="full-width-input">
+                            <option value="0">12:00 AM (Midnight)</option>
+                            <option value="1">1:00 AM</option>
+                            <option value="2">2:00 AM</option>
+                            <option value="3">3:00 AM</option>
+                            <option value="4">4:00 AM</option>
+                            <option value="5">5:00 AM</option>
+                            <option value="6">6:00 AM</option>
+                            <option value="7">7:00 AM</option>
+                            <option value="8">8:00 AM</option>
+                            <option value="9">9:00 AM</option>
+                            <option value="10">10:00 AM</option>
+                            <option value="11">11:00 AM</option>
+                            <option value="12">12:00 PM (Noon)</option>
+                            <option value="13">1:00 PM</option>
+                            <option value="14">2:00 PM</option>
+                            <option value="15">3:00 PM</option>
+                            <option value="16">4:00 PM</option>
+                            <option value="17">5:00 PM</option>
+                            <option value="18">6:00 PM</option>
+                            <option value="19">7:00 PM</option>
+                            <option value="20">8:00 PM</option>
+                            <option value="21">9:00 PM</option>
+                            <option value="22">10:00 PM</option>
+                            <option value="23">11:00 PM</option>
+                        </select>
+                    </div>
+                    <button id="save-helloclub-settings-btn" class="btn btn-primary btn-large">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polyline points="20 6 9 17 4 12"></polyline>
+                        </svg>
+                        <span>Save Settings</span>
+                    </button>
+                </div>
+
+                <div class="settings-card">
+                    <h3>Category Filter</h3>
+                    <p class="text-secondary">Select which event categories to import automatically</p>
+                    <div class="setting-item">
+                        <button id="fetch-categories-btn" class="btn btn-secondary btn-large">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <polyline points="23 4 23 10 17 10"></polyline>
+                                <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
+                            </svg>
+                            <span>Fetch Categories</span>
+                        </button>
+                    </div>
+                    <div id="helloclub-categories-list" class="categories-list">
+                        <p class="text-secondary">Click "Fetch Categories" to load available categories</p>
+                    </div>
+                </div>
+
+                <div class="settings-card">
+                    <h3>Import Events</h3>
+                    <p class="text-secondary">Manually import events from Hello Club</p>
+                    <button id="preview-events-btn" class="btn btn-success btn-large">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                            <circle cx="12" cy="12" r="3"></circle>
+                        </svg>
+                        <span>Preview & Import Events</span>
+                    </button>
+                    <button id="sync-now-btn" class="btn btn-warning btn-large">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polyline points="23 4 23 10 17 10"></polyline>
+                            <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
+                        </svg>
+                        <span>Sync Now (Auto-import)</span>
+                    </button>
+                </div>
+
+                <div class="settings-card" id="last-sync-card">
+                    <h3>Sync Status</h3>
+                    <div class="sync-status-info">
+                        <p id="last-sync-text" class="text-secondary">Never synced</p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="settings-controls">
+                <button id="close-helloclub-btn" class="btn btn-primary btn-large">
+                    <span>Close</span>
+                </button>
+            </div>
+        </div>
+
+        <!-- Hello Club Events Import Modal -->
+        <div id="helloclub-import-modal" class="modal hidden">
+            <div class="modal-content modal-large">
+                <h2>Import Hello Club Events</h2>
+                <p class="modal-subtitle">Select events to import as schedules</p>
+
+                <div id="helloclub-events-container" class="events-container">
+                    <p class="text-secondary">Loading events...</p>
+                </div>
+
+                <div class="modal-buttons">
+                    <button id="import-selected-btn" class="btn btn-success btn-large">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polyline points="20 6 9 17 4 12"></polyline>
+                        </svg>
+                        <span>Import Selected</span>
+                    </button>
+                    <button id="cancel-import-btn" class="btn btn-secondary btn-large">
+                        <span>Cancel</span>
+                    </button>
+                </div>
+            </div>
+        </div>
+
     </div>
     <script src="script.js"></script>
 </body>

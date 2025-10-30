@@ -1,0 +1,23 @@
+{
+  "name": "esp32-badminton-timer-test-server",
+  "version": "1.0.0",
+  "description": "Local testing server for ESP32 badminton timer web interface",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "keywords": [
+    "esp32",
+    "badminton",
+    "timer",
+    "websocket",
+    "mock"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "express": "^4.18.2",
+    "ws": "^8.14.2"
+  }
+}
