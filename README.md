@@ -2,7 +2,7 @@
 
 This project transforms an ESP32 microcontroller into a sophisticated, web-controlled timer specifically designed for badminton courts and sports facilities. It provides a clear, responsive user interface that can be accessed from any device with a web browser on the same local network.
 
-**Version:** 3.0.0
+**Version:** 3.1.0
 
 The timer is ideal for clubs, training facilities, or personal use, ensuring fair and consistent timing for games, practice sessions, and automated scheduling for multiple clubs sharing court time.
 
@@ -38,10 +38,21 @@ The timer is ideal for clubs, training facilities, or personal use, ensuring fai
 ### System Features
 - **Real-Time Clock:** Displays current time, automatically synchronized from the internet via NTP.
 - **NTP Sync Indicator:** Visual indicator showing time synchronization status.
-- **Automatic Timezone:** Configured for Pacific/Auckland with automatic DST adjustment.
+- **Configurable Timezone:** Choose from 20 common timezones worldwide with automatic DST adjustment.
 - **Persistent Settings:** All settings, schedules, and users saved to non-volatile memory.
 - **Over-the-Air (OTA) Updates:** Wireless firmware updates protected by password.
 - **Flexible WiFi Configuration:** Captive portal or hardcoded credentials.
+
+## What's New in v3.1
+
+- 🔒 **Enhanced Security:** SHA-256 password hashing with automatic migration from plaintext
+- 🔒 **HTTPS Validation:** Let's Encrypt certificate validation for Hello Club API integration
+- 🔒 **XSS Protection:** HTML escaping for all user-generated content
+- 🔒 **Stronger Passwords:** Minimum password length increased from 4 to 8 characters
+- 🌍 **International Support:** Configurable timezone selection (20 common timezones)
+- 🔧 **Reliability Improvements:** Timer overflow handling, 30-second schedule checks, API retry logic
+- 💾 **Memory Safety:** Dynamic JSON allocation to prevent stack overflow
+- 🛡️ **Input Validation:** IANA timezone format validation, password hash verification
 
 ## What's New in v3.0
 
@@ -117,7 +128,7 @@ See **INSTALL_GUIDE.md** for complete wiring diagram and assembly instructions.
 4. **Create operator accounts:**
    - Login as admin
    - Click user icon → Manage Users
-   - Add operators for each club with unique passwords (minimum 4 characters)
+   - Add operators for each club with unique passwords (minimum 8 characters)
 
 Example:
 ```cpp
@@ -126,6 +137,36 @@ const char* WEB_PASSWORD = "legacy"; // Not used in v3.0
 ```
 
 **Security Note:** The `wifi_credentials.h` file is ignored by git to protect your passwords. Never commit this file to a public repository.
+
+## Timezone Configuration
+
+**New in v3.1:** The system now supports configurable timezones for international deployment.
+
+### Setting Your Timezone
+
+1. **Login as admin** (only administrators can change timezone)
+2. **Navigate to Settings** (user icon in top navigation)
+3. **Locate System Settings section** (admin-only area)
+4. **Select your timezone** from the dropdown menu (20 common timezones available)
+5. **Changes apply immediately** - all schedules and time displays update instantly
+
+### Available Timezones
+
+The system includes 20 commonly-used timezones:
+- **Oceania:** Pacific/Auckland (NZ), Australia/Sydney, Pacific/Fiji
+- **Asia:** Asia/Tokyo, Asia/Singapore, Asia/Hong_Kong, Asia/Kolkata, Asia/Dubai
+- **Europe:** Europe/London (UK), Europe/Paris, Europe/Berlin, Europe/Moscow
+- **Americas:** America/New_York (EST/EDT), America/Chicago (CST/CDT), America/Denver (MST/MDT), America/Los_Angeles (PST/PDT), America/Toronto, America/Mexico_City, America/Sao_Paulo
+- **UTC:** UTC (Universal Coordinated Time)
+
+### How It Works
+
+- **Persistent Storage:** Timezone setting is saved to non-volatile memory (survives reboots)
+- **Automatic DST:** Timezones with daylight saving time automatically adjust
+- **Schedule Conversion:** Hello Club events are converted from UTC to your local timezone
+- **Default Timezone:** Pacific/Auckland (New Zealand) - change on first setup if deploying elsewhere
+
+**Important:** Ensure timezone is set correctly before creating schedules. Changing timezone after schedules are created does not retroactively update existing schedule times.
 
 ## User Roles Explained
 
@@ -322,7 +363,8 @@ esp32-badminton-timer/
 ### Schedules not auto-starting
 - Ensure "Automatic Scheduling" toggle is ON
 - Verify NTP sync indicator shows ✓ (green checkmark)
-- Check schedule time matches current time (Pacific/Auckland timezone)
+- Check schedule time matches current time in your configured timezone
+- Verify timezone is set correctly (Settings → System Settings)
 - Wait 2 minutes after last trigger (safety cooldown)
 
 ### Can't login as operator
@@ -374,6 +416,7 @@ For issues, questions, or feature requests:
 
 ## Version History
 
+- **v3.1.0** (2025-10-30) - Security hardening (SHA-256, HTTPS, XSS), configurable timezone, reliability improvements
 - **v3.0.0** (2025-10-30) - Authentication, scheduling, user management, NTP status, 16 bug fixes
 - **v2.0.0** (2025-10-29) - Modular architecture, improved timing, WebSocket sync
 - **v1.0.0** (Initial) - Basic timer functionality
