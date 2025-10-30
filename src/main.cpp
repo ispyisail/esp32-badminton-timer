@@ -1077,6 +1077,234 @@ void handleWebSocketMessage(void *arg, uint8_t *data, size_t len, AsyncWebSocket
         String output;
         serializeJson(successDoc, output);
         ws.textAll(output); // Notify all clients
+
+    // ==========================================================================
+    // --- Hello Club Integration WebSocket Handlers ---
+    // ==========================================================================
+
+    } else if (action == "get_helloclub_settings") {
+        // Admin only
+        if (clientRole != ADMIN) {
+            sendError(client, "Admin access required");
+            return;
+        }
+
+        StaticJsonDocument<512> settingsDoc;
+        settingsDoc["event"] = "helloclub_settings";
+        settingsDoc["apiKey"] = helloClubApiKey.isEmpty() ? "" : "***configured***"; // Don't send actual key
+        settingsDoc["enabled"] = helloClubEnabled;
+        settingsDoc["daysAhead"] = helloClubDaysAhead;
+        settingsDoc["categoryFilter"] = helloClubCategoryFilter;
+        settingsDoc["syncHour"] = helloClubSyncHour;
+        settingsDoc["lastSyncDay"] = lastHelloClubSyncDay;
+
+        String output;
+        serializeJson(settingsDoc, output);
+        client->text(output);
+
+    } else if (action == "save_helloclub_settings") {
+        // Admin only
+        if (clientRole != ADMIN) {
+            sendError(client, "Admin access required");
+            return;
+        }
+
+        // Update settings from request
+        if (doc.containsKey("apiKey")) {
+            String newApiKey = doc["apiKey"].as<String>();
+            if (!newApiKey.isEmpty() && newApiKey != "***configured***") {
+                helloClubApiKey = newApiKey;
+            }
+        }
+        if (doc.containsKey("enabled")) {
+            helloClubEnabled = doc["enabled"].as<bool>();
+        }
+        if (doc.containsKey("daysAhead")) {
+            int days = doc["daysAhead"].as<int>();
+            if (days >= 1 && days <= 30) {
+                helloClubDaysAhead = days;
+            }
+        }
+        if (doc.containsKey("categoryFilter")) {
+            helloClubCategoryFilter = doc["categoryFilter"].as<String>();
+        }
+        if (doc.containsKey("syncHour")) {
+            int hour = doc["syncHour"].as<int>();
+            if (hour >= 0 && hour <= 23) {
+                helloClubSyncHour = hour;
+            }
+        }
+
+        // Save to NVS
+        saveHelloClubSettings();
+
+        StaticJsonDocument<256> successDoc;
+        successDoc["event"] = "helloclub_settings_saved";
+        successDoc["message"] = "Hello Club settings saved successfully";
+        String output;
+        serializeJson(successDoc, output);
+        client->text(output);
+
+    } else if (action == "get_helloclub_categories") {
+        // Admin only
+        if (clientRole != ADMIN) {
+            sendError(client, "Admin access required");
+            return;
+        }
+
+        std::vector<String> categories;
+        if (helloClubClient.fetchAvailableCategories(helloClubDaysAhead, categories)) {
+            StaticJsonDocument<1024> categoriesDoc;
+            categoriesDoc["event"] = "helloclub_categories";
+            JsonArray catArray = categoriesDoc.createNestedArray("categories");
+            for (const auto& cat : categories) {
+                catArray.add(cat);
+            }
+            String output;
+            serializeJson(categoriesDoc, output);
+            client->text(output);
+        } else {
+            sendError(client, "Failed to fetch categories: " + helloClubClient.getLastError());
+        }
+
+    } else if (action == "get_helloclub_events") {
+        // Admin only
+        if (clientRole != ADMIN) {
+            sendError(client, "Admin access required");
+            return;
+        }
+
+        std::vector<HelloClubEvent> events;
+        if (helloClubClient.fetchEvents(helloClubDaysAhead, helloClubCategoryFilter, events)) {
+            // Build response with events
+            DynamicJsonDocument eventsDoc(8192); // 8KB for event list
+            eventsDoc["event"] = "helloclub_events";
+            JsonArray eventsArray = eventsDoc.createNestedArray("events");
+
+            for (const auto& evt : events) {
+                JsonObject eventObj = eventsArray.createNestedObject();
+                eventObj["id"] = evt.id;
+                eventObj["name"] = evt.name;
+                eventObj["startDate"] = evt.startDate;
+                eventObj["endDate"] = evt.endDate;
+                eventObj["activityName"] = evt.activityName;
+                eventObj["categoryName"] = evt.categoryName;
+                eventObj["durationMinutes"] = evt.durationMinutes;
+
+                // Check for conflicts
+                bool hasConflict = false;
+                Schedule tempSchedule;
+                if (helloClubClient.convertEventToSchedule(evt, "HelloClub", tempSchedule)) {
+                    std::vector<Schedule> existingSchedules = scheduleManager.getSchedules();
+                    for (const auto& existing : existingSchedules) {
+                        if (existing.dayOfWeek == tempSchedule.dayOfWeek &&
+                            existing.startHour == tempSchedule.startHour &&
+                            existing.startMinute == tempSchedule.startMinute) {
+                            hasConflict = true;
+                            eventObj["conflictWith"] = existing.clubName;
+                            break;
+                        }
+                    }
+                }
+                eventObj["hasConflict"] = hasConflict;
+            }
+
+            String output;
+            serializeJson(eventsDoc, output);
+            client->text(output);
+        } else {
+            sendError(client, "Failed to fetch events: " + helloClubClient.getLastError());
+        }
+
+    } else if (action == "import_helloclub_events") {
+        // Admin only
+        if (clientRole != ADMIN) {
+            sendError(client, "Admin access required");
+            return;
+        }
+
+        JsonArray eventIds = doc["eventIds"].as<JsonArray>();
+        if (eventIds.isNull() || eventIds.size() == 0) {
+            sendError(client, "No events selected for import");
+            return;
+        }
+
+        // Fetch all events first
+        std::vector<HelloClubEvent> allEvents;
+        if (!helloClubClient.fetchEvents(helloClubDaysAhead, helloClubCategoryFilter, allEvents)) {
+            sendError(client, "Failed to fetch events: " + helloClubClient.getLastError());
+            return;
+        }
+
+        int importedCount = 0;
+        int skippedCount = 0;
+
+        // Import only selected events
+        for (JsonVariant idVariant : eventIds) {
+            String selectedId = idVariant.as<String>();
+
+            // Find the event in our fetched list
+            HelloClubEvent* selectedEvent = nullptr;
+            for (auto& evt : allEvents) {
+                if (evt.id == selectedId) {
+                    selectedEvent = &evt;
+                    break;
+                }
+            }
+
+            if (!selectedEvent) {
+                continue;
+            }
+
+            // Convert to schedule
+            Schedule newSchedule;
+            if (!helloClubClient.convertEventToSchedule(*selectedEvent, "HelloClub", newSchedule)) {
+                skippedCount++;
+                continue;
+            }
+
+            // Check if already exists (update) or add new
+            Schedule existingSchedule;
+            if (scheduleManager.getScheduleById(newSchedule.id, existingSchedule)) {
+                if (scheduleManager.updateSchedule(newSchedule)) {
+                    importedCount++;
+                } else {
+                    skippedCount++;
+                }
+            } else {
+                if (scheduleManager.addSchedule(newSchedule)) {
+                    importedCount++;
+                } else {
+                    skippedCount++;
+                }
+            }
+        }
+
+        StaticJsonDocument<256> resultDoc;
+        resultDoc["event"] = "helloclub_import_complete";
+        resultDoc["imported"] = importedCount;
+        resultDoc["skipped"] = skippedCount;
+        String output;
+        serializeJson(resultDoc, output);
+        client->text(output);
+
+    } else if (action == "sync_helloclub_now") {
+        // Admin only
+        if (clientRole != ADMIN) {
+            sendError(client, "Admin access required");
+            return;
+        }
+
+        if (syncHelloClubEvents(false)) { // Manual sync, show conflict warnings
+            StaticJsonDocument<256> successDoc;
+            successDoc["event"] = "helloclub_sync_complete";
+            successDoc["message"] = "Hello Club sync completed successfully";
+            String output;
+            serializeJson(successDoc, output);
+            client->text(output);
+        } else {
+            sendError(client, "Hello Club sync failed: " + helloClubClient.getLastError());
+        }
     }
     sendStateUpdate();
 }
