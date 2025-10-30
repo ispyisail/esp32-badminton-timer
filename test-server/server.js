@@ -55,6 +55,75 @@ let operators = [
     { username: "operator2", password: "test456" }
 ];
 
+// Hello Club mock data
+let helloClubSettings = {
+    apiKey: '***configured***',
+    enabled: false,
+    daysAhead: 7,
+    categoryFilter: '',
+    syncHour: 0,
+    lastSyncDay: -1
+};
+
+const mockHelloClubCategories = [
+    'Badminton',
+    'Tennis',
+    'Pickleball',
+    'Squash',
+    'Table Tennis'
+];
+
+const mockHelloClubEvents = [
+    {
+        id: 'hc-event-1',
+        name: 'Badminton Evening Session',
+        startDate: getNextWeekday(1, 18, 0), // Next Monday 6 PM
+        endDate: getNextWeekday(1, 19, 30), // 90 minutes
+        activityName: 'Badminton',
+        categoryName: 'Badminton',
+        durationMinutes: 90
+    },
+    {
+        id: 'hc-event-2',
+        name: 'Competitive Badminton',
+        startDate: getNextWeekday(3, 19, 0), // Next Wednesday 7 PM
+        endDate: getNextWeekday(3, 20, 0), // 60 minutes
+        activityName: 'Badminton',
+        categoryName: 'Badminton',
+        durationMinutes: 60
+    },
+    {
+        id: 'hc-event-3',
+        name: 'Casual Badminton',
+        startDate: getNextWeekday(5, 18, 30), // Next Friday 6:30 PM
+        endDate: getNextWeekday(5, 20, 0), // 90 minutes
+        activityName: 'Badminton',
+        categoryName: 'Badminton',
+        durationMinutes: 90
+    },
+    {
+        id: 'hc-event-4',
+        name: 'Tennis Training',
+        startDate: getNextWeekday(2, 17, 0), // Next Tuesday 5 PM
+        endDate: getNextWeekday(2, 18, 30), // 90 minutes
+        activityName: 'Tennis',
+        categoryName: 'Tennis',
+        durationMinutes: 90
+    }
+];
+
+// Helper function to get next weekday at specific time
+function getNextWeekday(targetDay, hour, minute) {
+    const now = new Date();
+    const result = new Date(now);
+    const currentDay = now.getDay();
+    let daysToAdd = targetDay - currentDay;
+    if (daysToAdd <= 0) daysToAdd += 7;
+    result.setDate(now.getDate() + daysToAdd);
+    result.setHours(hour, minute, 0, 0);
+    return result.toISOString();
+}
+
 // Client tracking
 const clients = new Map();
 let nextClientId = 1;
@@ -266,6 +335,224 @@ function handleMessage(clientId, ws, msg) {
             schedulingEnabled = false;
             sendMessage(ws, { event: 'factory_reset_complete' });
             console.log('🔄 Factory reset completed');
+            break;
+
+        // Hello Club Integration
+        case 'get_helloclub_settings':
+            if (client.role !== 'admin') {
+                sendError(ws, 'Permission denied - admin only');
+                return;
+            }
+            sendMessage(ws, {
+                event: 'helloclub_settings',
+                ...helloClubSettings
+            });
+            console.log('⚙️  Hello Club settings requested');
+            break;
+
+        case 'save_helloclub_settings':
+            if (client.role !== 'admin') {
+                sendError(ws, 'Permission denied - admin only');
+                return;
+            }
+            if (msg.apiKey && msg.apiKey !== '***configured***') {
+                helloClubSettings.apiKey = '***configured***'; // Mask in test mode
+            }
+            if (msg.enabled !== undefined) helloClubSettings.enabled = msg.enabled;
+            if (msg.daysAhead !== undefined) helloClubSettings.daysAhead = msg.daysAhead;
+            if (msg.categoryFilter !== undefined) helloClubSettings.categoryFilter = msg.categoryFilter;
+            if (msg.syncHour !== undefined) helloClubSettings.syncHour = msg.syncHour;
+
+            sendMessage(ws, {
+                event: 'helloclub_settings_saved',
+                message: 'Hello Club settings saved successfully'
+            });
+            console.log('💾 Hello Club settings saved');
+            break;
+
+        case 'get_helloclub_categories':
+            if (client.role !== 'admin') {
+                sendError(ws, 'Permission denied - admin only');
+                return;
+            }
+            sendMessage(ws, {
+                event: 'helloclub_categories',
+                categories: mockHelloClubCategories
+            });
+            console.log('📋 Hello Club categories requested');
+            break;
+
+        case 'get_helloclub_events':
+            if (client.role !== 'admin') {
+                sendError(ws, 'Permission denied - admin only');
+                return;
+            }
+
+            // Filter events by category if filter is set
+            let filteredEvents = mockHelloClubEvents;
+            if (helloClubSettings.categoryFilter) {
+                const filterCategories = helloClubSettings.categoryFilter.split(',').map(c => c.trim());
+                filteredEvents = mockHelloClubEvents.filter(event =>
+                    filterCategories.includes(event.categoryName)
+                );
+            }
+
+            // Check for conflicts with existing schedules
+            const eventsWithConflicts = filteredEvents.map(event => {
+                const eventDate = new Date(event.startDate);
+                const dayOfWeek = eventDate.getDay();
+                const hour = eventDate.getHours();
+                const minute = eventDate.getMinutes();
+
+                const conflictingSchedule = schedules.find(s =>
+                    s.dayOfWeek === dayOfWeek &&
+                    s.startHour === hour &&
+                    s.startMinute === minute
+                );
+
+                return {
+                    ...event,
+                    hasConflict: !!conflictingSchedule,
+                    conflictWith: conflictingSchedule ? conflictingSchedule.clubName : undefined
+                };
+            });
+
+            sendMessage(ws, {
+                event: 'helloclub_events',
+                events: eventsWithConflicts
+            });
+            console.log(`📅 Hello Club events requested (${eventsWithConflicts.length} events)`);
+            break;
+
+        case 'import_helloclub_events':
+            if (client.role !== 'admin') {
+                sendError(ws, 'Permission denied - admin only');
+                return;
+            }
+
+            const eventIds = msg.eventIds || [];
+            let imported = 0;
+            let skipped = 0;
+
+            eventIds.forEach(eventId => {
+                const event = mockHelloClubEvents.find(e => e.id === eventId);
+                if (!event) {
+                    skipped++;
+                    return;
+                }
+
+                const eventDate = new Date(event.startDate);
+                const scheduleId = `hc-${eventId}`;
+
+                // Check if already exists
+                const existingIndex = schedules.findIndex(s => s.id === scheduleId);
+
+                const newSchedule = {
+                    id: scheduleId,
+                    clubName: event.name,
+                    ownerUsername: 'HelloClub',
+                    dayOfWeek: eventDate.getDay(),
+                    startHour: eventDate.getHours(),
+                    startMinute: eventDate.getMinutes(),
+                    durationMinutes: event.durationMinutes,
+                    enabled: true,
+                    createdAt: Date.now()
+                };
+
+                if (existingIndex >= 0) {
+                    schedules[existingIndex] = newSchedule;
+                } else {
+                    schedules.push(newSchedule);
+                }
+                imported++;
+                console.log(`📥 Imported: ${event.name}`);
+            });
+
+            sendMessage(ws, {
+                event: 'helloclub_import_complete',
+                imported,
+                skipped
+            });
+            console.log(`✅ Hello Club import: ${imported} imported, ${skipped} skipped`);
+            break;
+
+        case 'sync_helloclub_now':
+            if (client.role !== 'admin') {
+                sendError(ws, 'Permission denied - admin only');
+                return;
+            }
+
+            // Auto-import all matching events
+            let autoImported = 0;
+            let autoSkipped = 0;
+
+            let eventsToSync = mockHelloClubEvents;
+            if (helloClubSettings.categoryFilter) {
+                const filterCategories = helloClubSettings.categoryFilter.split(',').map(c => c.trim());
+                eventsToSync = mockHelloClubEvents.filter(event =>
+                    filterCategories.includes(event.categoryName)
+                );
+            }
+
+            eventsToSync.forEach(event => {
+                const eventDate = new Date(event.startDate);
+                const dayOfWeek = eventDate.getDay();
+                const hour = eventDate.getHours();
+                const minute = eventDate.getMinutes();
+
+                // Check for conflicts
+                const hasConflict = schedules.some(s =>
+                    s.dayOfWeek === dayOfWeek &&
+                    s.startHour === hour &&
+                    s.startMinute === minute &&
+                    !s.id.startsWith('hc-')
+                );
+
+                if (hasConflict) {
+                    autoSkipped++;
+                    return;
+                }
+
+                const scheduleId = `hc-${event.id}`;
+                const existingIndex = schedules.findIndex(s => s.id === scheduleId);
+
+                const newSchedule = {
+                    id: scheduleId,
+                    clubName: event.name,
+                    ownerUsername: 'HelloClub',
+                    dayOfWeek: dayOfWeek,
+                    startHour: hour,
+                    startMinute: minute,
+                    durationMinutes: event.durationMinutes,
+                    enabled: true,
+                    createdAt: Date.now()
+                };
+
+                if (existingIndex >= 0) {
+                    schedules[existingIndex] = newSchedule;
+                } else {
+                    schedules.push(newSchedule);
+                }
+                autoImported++;
+            });
+
+            helloClubSettings.lastSyncDay = new Date().getDay();
+
+            sendMessage(ws, {
+                event: 'helloclub_sync_complete',
+                message: `Sync complete: ${autoImported} imported, ${autoSkipped} skipped`
+            });
+            console.log(`🔄 Hello Club sync: ${autoImported} imported, ${autoSkipped} skipped`);
+            break;
+
+        case 'enable_scheduling':
+            if (client.role === 'viewer') {
+                sendError(ws, 'Permission denied - viewer mode');
+                return;
+            }
+            schedulingEnabled = msg.enabled === true;
+            broadcast({ event: 'scheduling_enabled', enabled: schedulingEnabled });
+            console.log(`📅 Scheduling ${schedulingEnabled ? 'enabled' : 'disabled'}`);
             break;
 
         default:
