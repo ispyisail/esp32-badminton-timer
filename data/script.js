@@ -316,8 +316,8 @@ function sendWebSocketMessage(payload) {
 
 function sendSettings() {
     const newSettings = {
-        gameDuration: parseInt(gameDurationInput.value),
-        breakDuration: parseInt(breakTimeInput.value),
+        gameDuration: parseInt(gameDurationInput.value) * 60000, // Convert minutes to milliseconds
+        breakDuration: parseInt(breakTimeInput.value) * 1000, // Convert seconds to milliseconds
         numRounds: parseInt(numRoundsInput.value),
         breakTimerEnabled: breakTimerEnableInput.checked,
         sirenLength: parseInt(sirenLengthInput.value),
