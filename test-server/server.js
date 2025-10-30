@@ -21,10 +21,21 @@ const server = app.listen(PORT, () => {
 const wss = new WebSocket.Server({ server });
 
 // Mock data storage
-let timerRunning = false;
-let remainingTime = 0;
-let totalDuration = 120;
+let timerStatus = 'IDLE'; // 'IDLE', 'RUNNING', 'PAUSED', 'FINISHED'
+let mainTimerRemaining = 0;
+let breakTimerRemaining = 0;
+let currentRound = 1;
 let schedulingEnabled = false;
+
+// Settings storage
+let settings = {
+    gameDuration: 21 * 60 * 1000, // 21 minutes in milliseconds
+    breakDuration: 60 * 1000, // 60 seconds in milliseconds
+    numRounds: 3,
+    breakTimerEnabled: true,
+    sirenLength: 1000,
+    sirenPause: 1000
+};
 let schedules = [
     {
         id: "mock-1",
@@ -138,14 +149,36 @@ wss.on('connection', (ws) => {
 
     console.log(`✅ Client ${clientId} connected`);
 
-    // Send initial state
+    // Send initial settings
     sendMessage(ws, {
-        event: 'timer_update',
-        running: timerRunning,
-        remainingTime: remainingTime,
-        totalDuration: totalDuration
+        event: 'settings',
+        settings: settings
     });
 
+    // Send initial state
+    sendMessage(ws, {
+        event: 'state',
+        state: {
+            status: timerStatus,
+            time: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true }),
+            currentRound: currentRound,
+            numRounds: settings.numRounds,
+            mainTimer: mainTimerRemaining,
+            breakTimer: breakTimerRemaining
+        }
+    });
+
+    // Send sync event with current timer state
+    sendMessage(ws, {
+        event: 'sync',
+        status: timerStatus,
+        mainTimerRemaining: mainTimerRemaining,
+        breakTimerRemaining: breakTimerRemaining,
+        currentRound: currentRound,
+        numRounds: settings.numRounds
+    });
+
+    // Send NTP status
     sendMessage(ws, {
         event: 'ntp_status',
         synced: true,
@@ -153,11 +186,6 @@ wss.on('connection', (ws) => {
         timezone: 'Pacific/Auckland',
         dateTime: new Date().toISOString().replace('T', ' ').substring(0, 19),
         autoSyncInterval: 30
-    });
-
-    sendMessage(ws, {
-        event: 'scheduling_status',
-        enabled: schedulingEnabled
     });
 
     ws.on('message', (data) => {
@@ -184,65 +212,85 @@ function handleMessage(clientId, ws, msg) {
             handleAuth(clientId, ws, msg);
             break;
 
-        case 'start':  // Changed from 'start_timer'
+        case 'start':
             if (client.role === 'viewer') {
                 sendError(ws, 'Permission denied - viewer mode');
                 return;
             }
-            timerRunning = true;
-            remainingTime = totalDuration;
-            broadcast({ event: 'timer_update', running: true, remainingTime, totalDuration });
+            timerStatus = 'RUNNING';
+            mainTimerRemaining = settings.gameDuration;
+            breakTimerRemaining = settings.breakDuration;
+            currentRound = 1;
+            broadcast({
+                event: 'start',
+                status: 'RUNNING',
+                gameDuration: settings.gameDuration,
+                breakDuration: settings.breakDuration,
+                currentRound: currentRound,
+                numRounds: settings.numRounds
+            });
             console.log('⏱️  Timer started');
             break;
 
-        case 'pause':  // Changed from 'stop_timer'
+        case 'pause':
             if (client.role === 'viewer') {
                 sendError(ws, 'Permission denied - viewer mode');
                 return;
             }
-            timerRunning = false;
-            broadcast({ event: 'timer_update', running: false, remainingTime, totalDuration });
-            console.log('⏸️  Timer paused');
+            if (timerStatus === 'RUNNING') {
+                timerStatus = 'PAUSED';
+                broadcast({ event: 'pause' });
+                console.log('⏸️  Timer paused');
+            } else if (timerStatus === 'PAUSED') {
+                timerStatus = 'RUNNING';
+                broadcast({ event: 'resume' });
+                console.log('▶️  Timer resumed');
+            }
             break;
 
-        case 'reset':  // Added reset action
+        case 'reset':
             if (client.role === 'viewer') {
                 sendError(ws, 'Permission denied - viewer mode');
                 return;
             }
-            timerRunning = false;
-            remainingTime = 0;
-            broadcast({ event: 'timer_update', running: false, remainingTime: 0, totalDuration });
+            timerStatus = 'IDLE';
+            mainTimerRemaining = 0;
+            breakTimerRemaining = 0;
+            currentRound = 1;
+            broadcast({ event: 'reset' });
             console.log('⏹️  Timer reset');
             break;
 
-        case 'save_settings':  // Added save_settings
+        case 'save_settings':
             if (client.role === 'viewer') {
                 sendError(ws, 'Permission denied - viewer mode');
                 return;
             }
-            // Mock settings save
-            sendMessage(ws, { event: 'settings_saved' });
-            console.log('💾 Settings saved');
+            // Update settings
+            if (msg.settings) {
+                settings = { ...settings, ...msg.settings };
+            }
+            // Broadcast updated settings to all clients
+            broadcast({ event: 'settings', settings: settings });
+            console.log('💾 Settings saved:', settings);
             break;
 
         case 'set_duration':
+            // Deprecated - use save_settings instead
             if (client.role === 'viewer') {
                 sendError(ws, 'Permission denied - viewer mode');
                 return;
             }
-            totalDuration = msg.duration || 120;
-            sendMessage(ws, { event: 'duration_set', duration: totalDuration });
-            console.log(`⏲️  Duration set to ${totalDuration}s`);
+            console.log('⚠️  set_duration is deprecated - use save_settings instead');
             break;
 
-        case 'enable_scheduling':  // Changed from 'set_scheduling'
+        case 'enable_scheduling':
             if (client.role === 'viewer') {
                 sendError(ws, 'Permission denied - viewer mode');
                 return;
             }
             schedulingEnabled = msg.enabled === true;
-            broadcast({ event: 'scheduling_status', enabled: schedulingEnabled });
+            broadcast({ event: 'scheduling_enabled', enabled: schedulingEnabled });
             console.log(`📅 Scheduling ${schedulingEnabled ? 'enabled' : 'disabled'}`);
             break;
 
@@ -250,7 +298,11 @@ function handleMessage(clientId, ws, msg) {
             const userSchedules = client.role === 'admin'
                 ? schedules
                 : schedules.filter(s => s.ownerUsername === client.username);
-            sendMessage(ws, { event: 'schedules_list', schedules: userSchedules });
+            sendMessage(ws, {
+                event: 'schedules_list',
+                schedules: userSchedules,
+                schedulingEnabled: schedulingEnabled
+            });
             break;
 
         case 'add_schedule':
@@ -343,6 +395,19 @@ function handleMessage(clientId, ws, msg) {
 
         case 'change_password':
             handlePasswordChange(clientId, ws, msg);
+            break;
+
+        case 'set_timezone':
+            if (client.role !== 'admin') {
+                sendError(ws, 'Permission denied - admin only');
+                return;
+            }
+            const newTimezone = msg.timezone || 'Pacific/Auckland';
+            sendMessage(ws, {
+                event: 'timezone_changed',
+                timezone: newTimezone
+            });
+            console.log(`🌍 Timezone changed to: ${newTimezone}`);
             break;
 
         case 'factory_reset':
@@ -578,7 +643,7 @@ function handleAuth(clientId, ws, msg) {
         client.role = 'viewer';
         client.username = 'Viewer';
         sendMessage(ws, {
-            event: 'viewer_mode',
+            event: 'auth_success',
             role: 'viewer',
             username: 'Viewer'
         });
@@ -614,7 +679,10 @@ function handleAuth(clientId, ws, msg) {
     }
 
     // Failed auth
-    sendError(ws, 'ERR_AUTH_FAILED: Invalid username or password');
+    sendMessage(ws, {
+        event: 'auth_failed',
+        message: 'Invalid username or password'
+    });
     console.log(`❌ Client ${clientId} authentication failed`);
 }
 
@@ -654,17 +722,51 @@ function broadcast(data) {
 
 // Simulate timer countdown
 setInterval(() => {
-    if (timerRunning && remainingTime > 0) {
-        remainingTime--;
+    if (timerStatus === 'RUNNING') {
+        // Countdown main timer
+        if (mainTimerRemaining > 0) {
+            mainTimerRemaining -= 1000; // Decrease by 1 second (1000ms)
+            if (mainTimerRemaining < 0) mainTimerRemaining = 0;
+        }
+
+        // Countdown break timer
+        if (breakTimerRemaining > 0) {
+            breakTimerRemaining -= 1000;
+            if (breakTimerRemaining < 0) breakTimerRemaining = 0;
+        }
+
+        // Send sync event to all clients
         broadcast({
-            event: 'timer_update',
-            running: true,
-            remainingTime,
-            totalDuration
+            event: 'sync',
+            status: timerStatus,
+            mainTimerRemaining: mainTimerRemaining,
+            breakTimerRemaining: breakTimerRemaining,
+            currentRound: currentRound,
+            numRounds: settings.numRounds
         });
-        if (remainingTime === 0) {
-            timerRunning = false;
-            console.log('⏰ Timer finished!');
+
+        // Check if round finished
+        if (mainTimerRemaining === 0 && breakTimerRemaining === 0) {
+            if (currentRound < settings.numRounds) {
+                // Start next round
+                currentRound++;
+                mainTimerRemaining = settings.gameDuration;
+                breakTimerRemaining = settings.breakDuration;
+                broadcast({
+                    event: 'new_round',
+                    status: 'RUNNING',
+                    gameDuration: settings.gameDuration,
+                    breakDuration: settings.breakDuration,
+                    currentRound: currentRound,
+                    numRounds: settings.numRounds
+                });
+                console.log(`🔄 Starting round ${currentRound}`);
+            } else {
+                // All rounds finished
+                timerStatus = 'FINISHED';
+                broadcast({ event: 'finished' });
+                console.log('⏰ All rounds finished!');
+            }
         }
     }
 }, 1000);
