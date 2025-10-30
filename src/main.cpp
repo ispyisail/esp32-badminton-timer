@@ -277,9 +277,9 @@ void loop() {
         }
     }
 
-    // Check for scheduled timer starts (once per minute)
+    // Check for scheduled timer starts (every 30 seconds for better reliability)
     static unsigned long lastScheduleCheck = 0;
-    if (millis() - lastScheduleCheck >= 60000) { // Check every minute
+    if (millis() - lastScheduleCheck >= 30000) { // Check every 30 seconds (reduced from 60s)
         lastScheduleCheck = millis();
 
         Schedule triggeredSchedule;
@@ -868,7 +868,8 @@ void handleWebSocketMessage(void *arg, uint8_t *data, size_t len, AsyncWebSocket
 
         // Buffer size calculation: 50 schedules * 150 bytes/schedule ≈ 7500 bytes
         // Adding 500 byte overhead = 8000 bytes total, round up to 8192
-        StaticJsonDocument<8192> schedulesDoc;
+        // Use DynamicJsonDocument to prevent stack overflow with many schedules
+        DynamicJsonDocument schedulesDoc(8192);
         schedulesDoc["event"] = "schedules_list";
         schedulesDoc["schedulingEnabled"] = scheduleManager.isSchedulingEnabled();
         JsonArray schedulesArray = schedulesDoc.createNestedArray("schedules");
@@ -1154,7 +1155,7 @@ void handleWebSocketMessage(void *arg, uint8_t *data, size_t len, AsyncWebSocket
 
         std::vector<String> categories;
         if (helloClubClient.fetchAvailableCategories(helloClubDaysAhead, categories)) {
-            StaticJsonDocument<1024> categoriesDoc;
+            DynamicJsonDocument categoriesDoc(1024);
             categoriesDoc["event"] = "helloclub_categories";
             JsonArray catArray = categoriesDoc.createNestedArray("categories");
             for (const auto& cat : categories) {
@@ -1194,7 +1195,7 @@ void handleWebSocketMessage(void *arg, uint8_t *data, size_t len, AsyncWebSocket
                 // Check for conflicts
                 bool hasConflict = false;
                 Schedule tempSchedule;
-                if (helloClubClient.convertEventToSchedule(evt, "HelloClub", tempSchedule)) {
+                if (helloClubClient.convertEventToSchedule(evt, "HelloClub", tempSchedule, &myTZ)) {
                     std::vector<Schedule> existingSchedules = scheduleManager.getSchedules();
                     for (const auto& existing : existingSchedules) {
                         if (existing.dayOfWeek == tempSchedule.dayOfWeek &&
@@ -1256,9 +1257,9 @@ void handleWebSocketMessage(void *arg, uint8_t *data, size_t len, AsyncWebSocket
                 continue;
             }
 
-            // Convert to schedule
+            // Convert to schedule with timezone conversion
             Schedule newSchedule;
-            if (!helloClubClient.convertEventToSchedule(*selectedEvent, "HelloClub", newSchedule)) {
+            if (!helloClubClient.convertEventToSchedule(*selectedEvent, "HelloClub", newSchedule, &myTZ)) {
                 skippedCount++;
                 continue;
             }
@@ -1577,9 +1578,9 @@ bool syncHelloClubEvents(bool skipConflictCheck) {
     int skippedCount = 0;
 
     for (const auto& event : events) {
-        // Convert event to schedule
+        // Convert event to schedule with timezone conversion
         Schedule newSchedule;
-        if (!helloClubClient.convertEventToSchedule(event, "HelloClub", newSchedule)) {
+        if (!helloClubClient.convertEventToSchedule(event, "HelloClub", newSchedule, &myTZ)) {
             Serial.printf("HelloClub: Failed to convert event '%s'\n", event.name.c_str());
             skippedCount++;
             continue;

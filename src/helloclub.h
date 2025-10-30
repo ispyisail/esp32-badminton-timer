@@ -4,6 +4,7 @@
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
 #include <vector>
+#include <ezTime.h>
 #include "schedule.h"
 
 /**
@@ -56,9 +57,10 @@ public:
      * @param event The Hello Club event to convert
      * @param ownerUsername Username to assign as schedule owner
      * @param schedule Output schedule struct
+     * @param localTz Local timezone for conversion (default Pacific/Auckland)
      * @return true if conversion successful, false otherwise
      */
-    bool convertEventToSchedule(const HelloClubEvent& event, const String& ownerUsername, Schedule& schedule);
+    bool convertEventToSchedule(const HelloClubEvent& event, const String& ownerUsername, Schedule& schedule, Timezone* localTz = nullptr);
 
     /**
      * Get last error message

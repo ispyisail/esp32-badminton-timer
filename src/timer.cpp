@@ -96,8 +96,26 @@ void Timer::resume() {
         state = RUNNING;
         // Restart timers from remaining time
         unsigned long now = millis();
-        mainTimerStart = now - (gameDuration - mainTimerRemaining);
-        breakTimerStart = now - (breakDuration - breakTimerRemaining);
+
+        // Calculate elapsed time (what has already passed)
+        unsigned long mainElapsed = gameDuration - mainTimerRemaining;
+        unsigned long breakElapsed = breakDuration - breakTimerRemaining;
+
+        // Set start times accounting for potential overflow
+        // If now - elapsed would underflow, we need to handle it
+        if (now >= mainElapsed) {
+            mainTimerStart = now - mainElapsed;
+        } else {
+            // Overflow case: now is small (wrapped), elapsed is large
+            mainTimerStart = (0xFFFFFFFF - mainElapsed) + now + 1;
+        }
+
+        if (now >= breakElapsed) {
+            breakTimerStart = now - breakElapsed;
+        } else {
+            // Overflow case
+            breakTimerStart = (0xFFFFFFFF - breakElapsed) + now + 1;
+        }
     }
 }
 

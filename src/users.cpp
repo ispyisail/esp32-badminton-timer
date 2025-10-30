@@ -1,4 +1,5 @@
 #include "users.h"
+#include "mbedtls/sha256.h"
 
 // NVS keys
 const char* UserManager::PREF_NAMESPACE = "users";
@@ -9,7 +10,7 @@ const char* UserManager::PREF_OPERATOR_PREFIX = "op_"; // op_0_user, op_0_pass, 
 
 UserManager::UserManager()
     : adminUsername("admin")
-    , adminPassword("admin")
+    , adminPasswordHash("")  // Will be set on first load
 {
 }
 
@@ -28,11 +29,29 @@ void UserManager::load() {
 
     // Load admin credentials
     adminUsername = prefs.getString(PREF_ADMIN_USER, "admin");
-    adminPassword = prefs.getString(PREF_ADMIN_PASS, "admin");
+    String storedPass = prefs.getString(PREF_ADMIN_PASS, "");
+
+    // Migration: Check if password is plaintext (length != 64 chars for SHA-256 hex)
+    // or if it's the default "admin" password
+    if (storedPass.length() == 0 || storedPass == "admin" || storedPass.length() != 64) {
+        // First time or plaintext - hash the default password
+        Serial.println("Migrating admin password to hashed format");
+        if (storedPass.length() == 0) {
+            storedPass = "admin"; // Default password
+        }
+        adminPasswordHash = hashPassword(storedPass);
+        prefs.end();
+        save(); // Save the hashed version
+        prefs.begin(PREF_NAMESPACE, true); // Reopen as read-only
+    } else {
+        // Already hashed
+        adminPasswordHash = storedPass;
+    }
 
     // Load operators
     operators.clear();
     int operatorCount = prefs.getInt(PREF_OPERATOR_COUNT, 0);
+    bool needsMigration = false;
 
     for (int i = 0; i < operatorCount && i < MAX_OPERATORS; i++) {
         String userKey = String(PREF_OPERATOR_PREFIX) + String(i) + "_user";
@@ -44,13 +63,27 @@ void UserManager::load() {
         if (username.length() > 0 && password.length() > 0) {
             User op;
             op.username = username;
-            op.password = password;
+
+            // Migration: Check if password is plaintext
+            if (password.length() != 64) {
+                Serial.printf("Migrating password for operator '%s' to hashed format\n", username.c_str());
+                op.password = hashPassword(password);
+                needsMigration = true;
+            } else {
+                op.password = password;
+            }
+
             op.role = OPERATOR;
             operators.push_back(op);
         }
     }
 
     prefs.end();
+
+    // Save migrated passwords
+    if (needsMigration) {
+        save();
+    }
 
     Serial.printf("Loaded %d operator(s) from NVS\n", operators.size());
 }
@@ -62,9 +95,9 @@ void UserManager::save() {
         return;
     }
 
-    // Save admin credentials
+    // Save admin credentials (hash, not plaintext)
     prefs.putString(PREF_ADMIN_USER, adminUsername);
-    prefs.putString(PREF_ADMIN_PASS, adminPassword);
+    prefs.putString(PREF_ADMIN_PASS, adminPasswordHash);
 
     // Save operators
     prefs.putInt(PREF_OPERATOR_COUNT, operators.size());
@@ -84,7 +117,7 @@ void UserManager::save() {
 
 void UserManager::setDefaults() {
     adminUsername = "admin";
-    adminPassword = "admin";
+    adminPasswordHash = hashPassword("admin");
     operators.clear();
 
     Serial.println("User credentials reset to factory defaults");
@@ -92,14 +125,14 @@ void UserManager::setDefaults() {
 
 UserRole UserManager::authenticate(const String& username, const String& password) {
     // Check admin
-    if (username == adminUsername && password == adminPassword) {
+    if (username == adminUsername && verifyPassword(password, adminPasswordHash)) {
         Serial.println("User authenticated as ADMIN");
         return ADMIN;
     }
 
     // Check operators
     for (const auto& op : operators) {
-        if (op.username == username && op.password == password) {
+        if (op.username == username && verifyPassword(password, op.password)) {
             Serial.println("User authenticated as OPERATOR");
             return OPERATOR;
         }
@@ -124,8 +157,8 @@ bool UserManager::addOperator(const String& username, const String& password) {
     }
 
     // Check minimum password length (security requirement)
-    if (password.length() < 4) {
-        Serial.println("Cannot add operator: password must be at least 4 characters");
+    if (password.length() < MIN_PASSWORD_LENGTH) {
+        Serial.printf("Cannot add operator: password must be at least %d characters\n", MIN_PASSWORD_LENGTH);
         return false;
     }
 
@@ -135,10 +168,10 @@ bool UserManager::addOperator(const String& username, const String& password) {
         return false;
     }
 
-    // Add operator
+    // Add operator with hashed password
     User newOp;
     newOp.username = username;
-    newOp.password = password;
+    newOp.password = hashPassword(password);  // Store hash, not plaintext
     newOp.role = OPERATOR;
     operators.push_back(newOp);
 
@@ -171,15 +204,15 @@ bool UserManager::changePassword(const String& username, const String& oldPasswo
     }
 
     // Check minimum password length (security requirement)
-    if (newPassword.length() < 4) {
-        Serial.println("Cannot change password: new password must be at least 4 characters");
+    if (newPassword.length() < MIN_PASSWORD_LENGTH) {
+        Serial.printf("Cannot change password: new password must be at least %d characters\n", MIN_PASSWORD_LENGTH);
         return false;
     }
 
     // Check admin
     if (username == adminUsername) {
-        if (adminPassword == oldPassword) {
-            adminPassword = newPassword;
+        if (verifyPassword(oldPassword, adminPasswordHash)) {
+            adminPasswordHash = hashPassword(newPassword);  // Store new hash
             save();
             Serial.printf("Password changed for admin user '%s'\n", username.c_str());
             return true;
@@ -192,8 +225,8 @@ bool UserManager::changePassword(const String& username, const String& oldPasswo
     // Check operators
     for (auto& op : operators) {
         if (op.username == username) {
-            if (op.password == oldPassword) {
-                op.password = newPassword;
+            if (verifyPassword(oldPassword, op.password)) {
+                op.password = hashPassword(newPassword);  // Store new hash
                 save();
                 Serial.printf("Password changed for operator '%s'\n", username.c_str());
                 return true;
@@ -240,4 +273,31 @@ bool UserManager::factoryReset() {
 
     Serial.println("Factory reset complete");
     return true;
+}
+
+String UserManager::hashPassword(const String& password) {
+    // Use SHA-256 to hash the password
+    unsigned char hash[32];
+    mbedtls_sha256_context ctx;
+
+    mbedtls_sha256_init(&ctx);
+    mbedtls_sha256_starts(&ctx, 0); // 0 = SHA-256 (not SHA-224)
+    mbedtls_sha256_update(&ctx, (unsigned char*)password.c_str(), password.length());
+    mbedtls_sha256_finish(&ctx, hash);
+    mbedtls_sha256_free(&ctx);
+
+    // Convert hash to hexadecimal string
+    String hashStr = "";
+    for (int i = 0; i < 32; i++) {
+        char hex[3];
+        sprintf(hex, "%02x", hash[i]);
+        hashStr += hex;
+    }
+
+    return hashStr;
+}
+
+bool UserManager::verifyPassword(const String& password, const String& hash) {
+    String computedHash = hashPassword(password);
+    return computedHash.equals(hash);
 }
