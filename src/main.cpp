@@ -735,7 +735,9 @@ void handleWebSocketMessage(void *arg, uint8_t *data, size_t len, AsyncWebSocket
             schedules = scheduleManager.getSchedulesByClub(clubFilter);
         }
 
-        StaticJsonDocument<2048> schedulesDoc;
+        // Buffer size calculation: 50 schedules * 150 bytes/schedule ≈ 7500 bytes
+        // Adding 500 byte overhead = 8000 bytes total, round up to 8192
+        StaticJsonDocument<8192> schedulesDoc;
         schedulesDoc["event"] = "schedules_list";
         schedulesDoc["schedulingEnabled"] = scheduleManager.isSchedulingEnabled();
         JsonArray schedulesArray = schedulesDoc.createNestedArray("schedules");

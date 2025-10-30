@@ -132,6 +132,7 @@ private:
     std::vector<Schedule> schedules;
     std::map<String, unsigned long> lastTriggerTimes; // Track when each schedule last triggered
     bool schedulingEnabled;
+    unsigned int scheduleIdCounter; // Counter to ensure unique IDs
 
     static const int MAX_SCHEDULES = 50;
     static const char* PREF_NAMESPACE;

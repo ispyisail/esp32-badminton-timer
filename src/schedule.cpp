@@ -9,6 +9,7 @@ const char* ScheduleManager::PREF_SCHEDULING_ENABLED = "enabled";
 
 ScheduleManager::ScheduleManager()
     : schedulingEnabled(false)
+    , scheduleIdCounter(0)
 {
 }
 
@@ -144,6 +145,10 @@ bool ScheduleManager::deleteSchedule(const String& id) {
         if (it->id == id) {
             Serial.printf("Deleted schedule: %s\n", id.c_str());
             schedules.erase(it);
+
+            // Clean up trigger tracking to prevent memory leak
+            lastTriggerTimes.erase(id);
+
             save();
             return true;
         }
@@ -208,8 +213,21 @@ bool ScheduleManager::checkScheduleTrigger(Timezone& tz, Schedule& triggeredSche
             // Check if we already triggered this schedule recently (within last 2 minutes)
             if (lastTriggerTimes.find(sched.id) != lastTriggerTimes.end()) {
                 unsigned long lastTrigger = lastTriggerTimes[sched.id];
-                if ((currentWeekMinute - lastTrigger) < 2) {
-                    continue; // Don't re-trigger
+
+                // Calculate difference with week wraparound handling
+                // Week has 10080 minutes (7 * 24 * 60)
+                const int WEEK_MINUTES = 10080;
+                int timeSinceTrigger;
+
+                if (currentWeekMinute >= lastTrigger) {
+                    timeSinceTrigger = currentWeekMinute - lastTrigger;
+                } else {
+                    // Week wrapped around (e.g., Saturday 23:59 -> Sunday 00:00)
+                    timeSinceTrigger = (WEEK_MINUTES - lastTrigger) + currentWeekMinute;
+                }
+
+                if (timeSinceTrigger < 2) {
+                    continue; // Don't re-trigger within 2 minutes
                 }
             }
 
@@ -244,8 +262,35 @@ void ScheduleManager::setSchedulingEnabled(bool enabled) {
 }
 
 String ScheduleManager::generateScheduleId() {
-    // Generate unique ID from timestamp + random
+    // Generate unique ID from timestamp + counter
+    // Format: timestamp-counter (e.g., "123456789-1")
     unsigned long timestamp = millis();
-    int randomNum = random(1000, 9999);
-    return String(timestamp) + String(randomNum);
+    scheduleIdCounter++;
+
+    String candidateId;
+    bool isUnique = false;
+    int attempts = 0;
+
+    // Try up to 10 times to generate a unique ID
+    while (!isUnique && attempts < 10) {
+        candidateId = String(timestamp) + "-" + String(scheduleIdCounter + attempts);
+
+        // Check if ID already exists
+        isUnique = true;
+        for (const auto& sched : schedules) {
+            if (sched.id == candidateId) {
+                isUnique = false;
+                break;
+            }
+        }
+
+        attempts++;
+    }
+
+    if (!isUnique) {
+        // Fallback: add random component if collision still occurs
+        candidateId = String(timestamp) + "-" + String(scheduleIdCounter) + "-" + String(random(10000, 99999));
+    }
+
+    return candidateId;
 }
