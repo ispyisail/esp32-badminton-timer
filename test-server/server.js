@@ -235,6 +235,11 @@ function handleMessage(clientId, ws, msg) {
             timerRunning = false;
             mainTimerRemaining = 0;
             breakTimerRemaining = 0;
+
+            // Send reset event first (tells client to stop and clear display)
+            broadcast({ event: 'reset' });
+
+            // Then send sync with zeros
             broadcast({
                 event: 'sync',
                 mainTimerRemaining: 0,
