@@ -53,6 +53,25 @@ const cancelScheduleBtn = document.getElementById('cancel-schedule-btn');
 const schedulesList = document.getElementById('schedules-list');
 const closeScheduleBtn = document.getElementById('close-schedule-btn');
 
+// --- Hello Club elements ---
+const helloClubPage = document.getElementById('helloclub-page');
+const helloClubIcon = document.getElementById('helloclub-icon');
+const helloClubEnabled = document.getElementById('helloclub-enabled');
+const helloClubApiKey = document.getElementById('helloclub-api-key');
+const helloClubDaysAhead = document.getElementById('helloclub-days-ahead');
+const helloClubSyncHour = document.getElementById('helloclub-sync-hour');
+const saveHelloClubSettingsBtn = document.getElementById('save-helloclub-settings-btn');
+const fetchCategoriesBtn = document.getElementById('fetch-categories-btn');
+const helloClubCategoriesList = document.getElementById('helloclub-categories-list');
+const previewEventsBtn = document.getElementById('preview-events-btn');
+const syncNowBtn = document.getElementById('sync-now-btn');
+const lastSyncText = document.getElementById('last-sync-text');
+const closeHelloClubBtn = document.getElementById('close-helloclub-btn');
+const helloClubImportModal = document.getElementById('helloclub-import-modal');
+const helloClubEventsContainer = document.getElementById('helloclub-events-container');
+const importSelectedBtn = document.getElementById('import-selected-btn');
+const cancelImportBtn = document.getElementById('cancel-import-btn');
+
 // --- Settings inputs ---
 const gameDurationInput = document.getElementById('game-duration');
 const breakTimeInput = document.getElementById('break-time');
@@ -86,6 +105,11 @@ let currentUsername = 'Viewer';
 let schedules = [];
 let editingScheduleId = null;
 let schedulingEnabled = false;
+
+// --- Hello Club state ---
+let helloClubCategories = [];
+let helloClubEvents = [];
+let selectedCategories = [];
 
 // --- Button state tracking ---
 let buttonsEnabled = true;
@@ -661,6 +685,191 @@ function cancelScheduleEdit() {
     }
 }
 
+// --- Hello Club Functions ---
+
+function showHelloClubPage(show) {
+    mainPage.classList.toggle('hidden', show);
+    settingsPage.classList.add('hidden');
+    userManagementPage.classList.add('hidden');
+    schedulePage.classList.add('hidden');
+    if (helloClubPage) {
+        helloClubPage.classList.toggle('hidden', !show);
+    }
+
+    if (show) {
+        loadHelloClubSettings();
+    }
+}
+
+function loadHelloClubSettings() {
+    sendWebSocketMessage({ action: 'get_helloclub_settings' });
+}
+
+function saveHelloClubSettings() {
+    const apiKey = helloClubApiKey?.value.trim();
+    const enabled = helloClubEnabled?.checked;
+    const daysAhead = parseInt(helloClubDaysAhead?.value);
+    const syncHour = parseInt(helloClubSyncHour?.value);
+
+    // Build category filter from selected categories
+    const categoryFilter = selectedCategories.join(',');
+
+    const settings = {
+        enabled: enabled !== false,
+        daysAhead: isNaN(daysAhead) ? 7 : daysAhead,
+        categoryFilter: categoryFilter,
+        syncHour: isNaN(syncHour) ? 0 : syncHour
+    };
+
+    // Only include API key if it's been changed
+    if (apiKey && apiKey !== '***configured***') {
+        settings.apiKey = apiKey;
+    }
+
+    sendWebSocketMessage({
+        action: 'save_helloclub_settings',
+        ...settings
+    });
+}
+
+function fetchHelloClubCategories() {
+    showLoadingOverlay('Fetching categories from Hello Club...');
+    sendWebSocketMessage({ action: 'get_helloclub_categories' });
+}
+
+function renderHelloClubCategories(categories) {
+    if (!helloClubCategoriesList) return;
+
+    if (categories.length === 0) {
+        helloClubCategoriesList.innerHTML = '<p class="text-secondary">No categories found</p>';
+        return;
+    }
+
+    let html = '';
+    categories.forEach(category => {
+        const isChecked = selectedCategories.includes(category);
+        html += `
+            <div class="category-checkbox-item">
+                <input type="checkbox" id="cat-${category}" value="${category}" ${isChecked ? 'checked' : ''}
+                       onchange="toggleCategory('${category}')">
+                <label for="cat-${category}">${category}</label>
+            </div>
+        `;
+    });
+
+    helloClubCategoriesList.innerHTML = html;
+}
+
+function toggleCategory(category) {
+    const index = selectedCategories.indexOf(category);
+    if (index > -1) {
+        selectedCategories.splice(index, 1);
+    } else {
+        selectedCategories.push(category);
+    }
+}
+
+function previewHelloClubEvents() {
+    showLoadingOverlay('Loading events from Hello Club...');
+    sendWebSocketMessage({ action: 'get_helloclub_events' });
+}
+
+function renderHelloClubEvents(events) {
+    if (!helloClubEventsContainer) return;
+
+    if (events.length === 0) {
+        helloClubEventsContainer.innerHTML = '<p class="text-secondary">No events found</p>';
+        return;
+    }
+
+    let html = '';
+    events.forEach(event => {
+        const hasConflict = event.hasConflict || false;
+        const conflictClass = hasConflict ? 'has-conflict' : '';
+
+        // Parse date for display
+        const startDate = new Date(event.startDate);
+        const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+        const dayName = dayNames[startDate.getDay()];
+        const timeStr = startDate.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
+        const dateStr = startDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+
+        html += `
+            <div class="event-item ${conflictClass}">
+                <div class="event-checkbox-header">
+                    <input type="checkbox" id="event-${event.id}" value="${event.id}"
+                           ${hasConflict ? '' : 'checked'} class="event-checkbox">
+                    <div class="event-info">
+                        <div class="event-name">${event.name}</div>
+                        <div class="event-details">
+                            <div class="event-detail-row">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect>
+                                    <line x1="16" y1="2" x2="16" y2="6"></line>
+                                    <line x1="8" y1="2" x2="8" y2="6"></line>
+                                    <line x1="3" y1="10" x2="21" y2="10"></line>
+                                </svg>
+                                <span>${dayName}, ${dateStr} at ${timeStr}</span>
+                            </div>
+                            <div class="event-detail-row">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <circle cx="12" cy="12" r="10"></circle>
+                                    <polyline points="12 6 12 12 16 14"></polyline>
+                                </svg>
+                                <span>${event.durationMinutes} minutes</span>
+                            </div>
+                            ${event.categoryName ? `
+                            <div class="event-detail-row">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
+                                    <circle cx="12" cy="7" r="4"></circle>
+                                </svg>
+                                <span>${event.categoryName}</span>
+                            </div>
+                            ` : ''}
+                        </div>
+                    </div>
+                </div>
+                ${hasConflict ? `
+                <div class="event-conflict-warning">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
+                        <line x1="12" y1="9" x2="12" y2="13"></line>
+                        <line x1="12" y1="17" x2="12.01" y2="17"></line>
+                    </svg>
+                    <span>Conflicts with existing schedule: ${event.conflictWith || 'Unknown'}</span>
+                </div>
+                ` : ''}
+            </div>
+        `;
+    });
+
+    helloClubEventsContainer.innerHTML = html;
+}
+
+function importSelectedHelloClubEvents() {
+    const checkboxes = document.querySelectorAll('.event-checkbox:checked');
+    const eventIds = Array.from(checkboxes).map(cb => cb.value);
+
+    if (eventIds.length === 0) {
+        showTemporaryMessage('Please select at least one event to import', 'error');
+        return;
+    }
+
+    showLoadingOverlay(`Importing ${eventIds.length} event(s)...`);
+    sendWebSocketMessage({
+        action: 'import_helloclub_events',
+        eventIds: eventIds
+    });
+}
+
+function syncHelloClubNow() {
+    if (confirm('This will automatically import all matching events. Continue?')) {
+        showLoadingOverlay('Syncing with Hello Club...');
+        sendWebSocketMessage({ action: 'sync_helloclub_now' });
+    }
+}
+
 function updateConnectionStatus(connected) {
     const statusDot = document.getElementById('connection-status');
     const connectionText = document.querySelector('.connection-text');
@@ -845,6 +1054,54 @@ function initializeEventListeners() {
 
     if (cancelScheduleBtn) {
         cancelScheduleBtn.addEventListener('click', cancelScheduleEdit);
+    }
+
+    // --- Hello Club event listeners ---
+    if (helloClubIcon) {
+        helloClubIcon.addEventListener('click', () => {
+            if (userRole === 'admin') {
+                showHelloClubPage(true);
+            } else {
+                showTemporaryMessage('Admin access required', 'error');
+            }
+        });
+    }
+
+    if (closeHelloClubBtn) {
+        closeHelloClubBtn.addEventListener('click', () => showHelloClubPage(false));
+    }
+
+    if (saveHelloClubSettingsBtn) {
+        saveHelloClubSettingsBtn.addEventListener('click', saveHelloClubSettings);
+    }
+
+    if (fetchCategoriesBtn) {
+        fetchCategoriesBtn.addEventListener('click', fetchHelloClubCategories);
+    }
+
+    if (previewEventsBtn) {
+        previewEventsBtn.addEventListener('click', () => {
+            previewHelloClubEvents();
+            if (helloClubImportModal) {
+                helloClubImportModal.classList.remove('hidden');
+            }
+        });
+    }
+
+    if (syncNowBtn) {
+        syncNowBtn.addEventListener('click', syncHelloClubNow);
+    }
+
+    if (importSelectedBtn) {
+        importSelectedBtn.addEventListener('click', importSelectedHelloClubEvents);
+    }
+
+    if (cancelImportBtn) {
+        cancelImportBtn.addEventListener('click', () => {
+            if (helloClubImportModal) {
+                helloClubImportModal.classList.add('hidden');
+            }
+        });
     }
 
     // --- Keyboard support for login ---
@@ -1056,7 +1313,81 @@ function connectWebSocket() {
                 updateNTPStatus(data);
                 break;
 
+            case 'helloclub_settings':
+                // Populate settings form
+                if (helloClubApiKey) {
+                    helloClubApiKey.value = data.apiKey || '';
+                }
+                if (helloClubEnabled) {
+                    helloClubEnabled.checked = data.enabled || false;
+                }
+                if (helloClubDaysAhead) {
+                    helloClubDaysAhead.value = data.daysAhead || 7;
+                }
+                if (helloClubSyncHour) {
+                    helloClubSyncHour.value = data.syncHour || 0;
+                }
+                // Parse category filter
+                if (data.categoryFilter) {
+                    selectedCategories = data.categoryFilter.split(',').filter(c => c.trim());
+                } else {
+                    selectedCategories = [];
+                }
+                // Update last sync display
+                if (lastSyncText && data.lastSyncDay >= 0) {
+                    lastSyncText.textContent = `Last synced on day ${data.lastSyncDay}`;
+                } else if (lastSyncText) {
+                    lastSyncText.textContent = 'Never synced';
+                }
+                break;
+
+            case 'helloclub_settings_saved':
+                showTemporaryMessage(data.message || 'Hello Club settings saved', 'success');
+                break;
+
+            case 'helloclub_categories':
+                hideLoadingOverlay();
+                helloClubCategories = data.categories || [];
+                renderHelloClubCategories(helloClubCategories);
+                break;
+
+            case 'helloclub_events':
+                hideLoadingOverlay();
+                helloClubEvents = data.events || [];
+                renderHelloClubEvents(helloClubEvents);
+                break;
+
+            case 'helloclub_import_complete':
+                hideLoadingOverlay();
+                if (helloClubImportModal) {
+                    helloClubImportModal.classList.add('hidden');
+                }
+                showTemporaryMessage(
+                    `Import complete: ${data.imported} imported, ${data.skipped} skipped`,
+                    'success'
+                );
+                // Reload schedules if we're on schedule page
+                if (!schedulePage.classList.contains('hidden')) {
+                    loadSchedules();
+                }
+                break;
+
+            case 'helloclub_sync_complete':
+                hideLoadingOverlay();
+                showTemporaryMessage(data.message || 'Hello Club sync completed', 'success');
+                // Reload schedules if we're on schedule page
+                if (!schedulePage.classList.contains('hidden')) {
+                    loadSchedules();
+                }
+                // Update last sync text
+                if (lastSyncText) {
+                    const now = new Date();
+                    lastSyncText.textContent = `Last synced: ${now.toLocaleString()}`;
+                }
+                break;
+
             case 'error':
+                hideLoadingOverlay();
                 showTemporaryMessage(data.message || "An error occurred", "error");
                 break;
 
@@ -1137,6 +1468,7 @@ function connectWebSocket() {
 window.editSchedule = editSchedule;
 window.deleteSchedule = deleteSchedule;
 window.removeOperator = removeOperator;
+window.toggleCategory = toggleCategory;
 
 // --- Main Execution ---
 if (!SIMULATION_MODE) {

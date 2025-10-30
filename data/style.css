@@ -1173,6 +1173,169 @@ select.full-width-input {
     }
 }
 
+/* =============================================================================
+   Hello Club Integration Styles
+   ============================================================================= */
+
+.categories-list {
+    max-height: 250px;
+    overflow-y: auto;
+    margin-top: 15px;
+}
+
+.category-checkbox-item {
+    display: flex;
+    align-items: center;
+    padding: 10px;
+    background: white;
+    border-radius: var(--border-radius-sm);
+    margin-bottom: 8px;
+    border: 2px solid #e5e7eb;
+    transition: all var(--transition-fast);
+    cursor: pointer;
+}
+
+.category-checkbox-item:hover {
+    border-color: var(--primary-color);
+    background: #f9fafb;
+}
+
+.category-checkbox-item input[type="checkbox"] {
+    margin-right: 10px;
+    width: 18px;
+    height: 18px;
+    cursor: pointer;
+}
+
+.category-checkbox-item label {
+    flex: 1;
+    cursor: pointer;
+    margin: 0;
+    font-weight: 500;
+}
+
+/* --- Events Container --- */
+.events-container {
+    max-height: 400px;
+    overflow-y: auto;
+    margin-bottom: 20px;
+    padding: 10px;
+    background: #f9fafb;
+    border-radius: var(--border-radius-md);
+}
+
+.event-item {
+    background: white;
+    border: 2px solid #e5e7eb;
+    border-radius: var(--border-radius-md);
+    padding: 15px;
+    margin-bottom: 12px;
+    transition: all var(--transition-fast);
+}
+
+.event-item:hover {
+    border-color: var(--primary-color);
+    box-shadow: var(--shadow-sm);
+}
+
+.event-item.has-conflict {
+    border-color: var(--warning-color);
+    background: #fffbeb;
+}
+
+.event-checkbox-header {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    margin-bottom: 10px;
+}
+
+.event-checkbox-header input[type="checkbox"] {
+    margin-top: 3px;
+    width: 20px;
+    height: 20px;
+    cursor: pointer;
+}
+
+.event-info {
+    flex: 1;
+}
+
+.event-name {
+    font-size: 1.1em;
+    font-weight: 700;
+    color: var(--text-primary);
+    margin-bottom: 5px;
+}
+
+.event-details {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    color: var(--text-secondary);
+    font-size: 0.9em;
+}
+
+.event-detail-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.event-detail-row svg {
+    width: 16px;
+    height: 16px;
+    flex-shrink: 0;
+}
+
+.event-conflict-warning {
+    background: var(--warning-color);
+    color: white;
+    padding: 8px 12px;
+    border-radius: var(--border-radius-sm);
+    font-size: 0.85em;
+    font-weight: 600;
+    margin-top: 10px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.event-conflict-warning svg {
+    width: 18px;
+    height: 18px;
+    flex-shrink: 0;
+}
+
+/* --- Modal Large --- */
+.modal-large {
+    max-width: 600px;
+    max-height: 80vh;
+    overflow-y: auto;
+}
+
+/* --- Sync Status Info --- */
+.sync-status-info {
+    padding: 15px;
+    background: white;
+    border-radius: var(--border-radius-sm);
+    border: 2px solid #e5e7eb;
+}
+
+.sync-status-info p {
+    margin: 0;
+}
+
+.sync-status-success {
+    border-color: var(--success-color);
+    background: #f0fdf4;
+}
+
+.sync-status-success p {
+    color: var(--success-color);
+    font-weight: 600;
+}
+
 /* --- Print Styles --- */
 @media print {
     body {
@@ -1185,7 +1348,8 @@ select.full-width-input {
     #settings-page,
     #login-modal,
     #user-management-page,
-    #schedule-page {
+    #schedule-page,
+    #helloclub-page {
         display: none !important;
     }
 }

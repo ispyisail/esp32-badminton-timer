@@ -32,6 +32,14 @@
                             <circle cx="12" cy="7" r="4"></circle>
                         </svg>
                     </div>
+                    <div id="helloclub-icon" class="icon-button admin-only" title="Hello Club Integration">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+                            <circle cx="9" cy="7" r="4"></circle>
+                            <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
+                            <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
+                        </svg>
+                    </div>
                 </div>
                 <div class="header-title">
                     <h1>Badminton Timer</h1>
@@ -415,6 +423,147 @@
                 <button id="close-schedule-btn" class="btn btn-primary btn-large">
                     <span>Close</span>
                 </button>
+            </div>
+        </div>
+
+        <!-- Hello Club Integration Page (Admin Only) -->
+        <div id="helloclub-page" class="hidden">
+            <header class="header">
+                <div class="header-title">
+                    <h1>Hello Club Integration</h1>
+                </div>
+            </header>
+
+            <div class="settings-container">
+                <div class="settings-card">
+                    <h3>Configuration</h3>
+                    <div class="setting-item">
+                        <label for="helloclub-enabled">Enable Hello Club Sync</label>
+                        <label class="switch">
+                            <input type="checkbox" id="helloclub-enabled">
+                            <span class="slider"></span>
+                        </label>
+                    </div>
+                    <div class="setting-item">
+                        <label for="helloclub-api-key">API Key</label>
+                        <input type="password" id="helloclub-api-key" placeholder="Enter Hello Club API key" class="full-width-input">
+                    </div>
+                    <div class="setting-item">
+                        <label for="helloclub-days-ahead">Days to Look Ahead</label>
+                        <div class="input-group">
+                            <input type="number" id="helloclub-days-ahead" value="7" min="1" max="30">
+                            <span class="unit">days</span>
+                        </div>
+                    </div>
+                    <div class="setting-item">
+                        <label for="helloclub-sync-hour">Daily Sync Time</label>
+                        <select id="helloclub-sync-hour" class="full-width-input">
+                            <option value="0">12:00 AM (Midnight)</option>
+                            <option value="1">1:00 AM</option>
+                            <option value="2">2:00 AM</option>
+                            <option value="3">3:00 AM</option>
+                            <option value="4">4:00 AM</option>
+                            <option value="5">5:00 AM</option>
+                            <option value="6">6:00 AM</option>
+                            <option value="7">7:00 AM</option>
+                            <option value="8">8:00 AM</option>
+                            <option value="9">9:00 AM</option>
+                            <option value="10">10:00 AM</option>
+                            <option value="11">11:00 AM</option>
+                            <option value="12">12:00 PM (Noon)</option>
+                            <option value="13">1:00 PM</option>
+                            <option value="14">2:00 PM</option>
+                            <option value="15">3:00 PM</option>
+                            <option value="16">4:00 PM</option>
+                            <option value="17">5:00 PM</option>
+                            <option value="18">6:00 PM</option>
+                            <option value="19">7:00 PM</option>
+                            <option value="20">8:00 PM</option>
+                            <option value="21">9:00 PM</option>
+                            <option value="22">10:00 PM</option>
+                            <option value="23">11:00 PM</option>
+                        </select>
+                    </div>
+                    <button id="save-helloclub-settings-btn" class="btn btn-primary btn-large">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polyline points="20 6 9 17 4 12"></polyline>
+                        </svg>
+                        <span>Save Settings</span>
+                    </button>
+                </div>
+
+                <div class="settings-card">
+                    <h3>Category Filter</h3>
+                    <p class="text-secondary">Select which event categories to import automatically</p>
+                    <div class="setting-item">
+                        <button id="fetch-categories-btn" class="btn btn-secondary btn-large">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <polyline points="23 4 23 10 17 10"></polyline>
+                                <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
+                            </svg>
+                            <span>Fetch Categories</span>
+                        </button>
+                    </div>
+                    <div id="helloclub-categories-list" class="categories-list">
+                        <p class="text-secondary">Click "Fetch Categories" to load available categories</p>
+                    </div>
+                </div>
+
+                <div class="settings-card">
+                    <h3>Import Events</h3>
+                    <p class="text-secondary">Manually import events from Hello Club</p>
+                    <button id="preview-events-btn" class="btn btn-success btn-large">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                            <circle cx="12" cy="12" r="3"></circle>
+                        </svg>
+                        <span>Preview & Import Events</span>
+                    </button>
+                    <button id="sync-now-btn" class="btn btn-warning btn-large">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polyline points="23 4 23 10 17 10"></polyline>
+                            <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
+                        </svg>
+                        <span>Sync Now (Auto-import)</span>
+                    </button>
+                </div>
+
+                <div class="settings-card" id="last-sync-card">
+                    <h3>Sync Status</h3>
+                    <div class="sync-status-info">
+                        <p id="last-sync-text" class="text-secondary">Never synced</p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="settings-controls">
+                <button id="close-helloclub-btn" class="btn btn-primary btn-large">
+                    <span>Close</span>
+                </button>
+            </div>
+        </div>
+
+        <!-- Hello Club Events Import Modal -->
+        <div id="helloclub-import-modal" class="modal hidden">
+            <div class="modal-content modal-large">
+                <h2>Import Hello Club Events</h2>
+                <p class="modal-subtitle">Select events to import as schedules</p>
+
+                <div id="helloclub-events-container" class="events-container">
+                    <p class="text-secondary">Loading events...</p>
+                </div>
+
+                <div class="modal-buttons">
+                    <button id="import-selected-btn" class="btn btn-success btn-large">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polyline points="20 6 9 17 4 12"></polyline>
+                        </svg>
+                        <span>Import Selected</span>
+                    </button>
+                    <button id="cancel-import-btn" class="btn btn-secondary btn-large">
+                        <span>Cancel</span>
+                    </button>
+                </div>
             </div>
         </div>
 
