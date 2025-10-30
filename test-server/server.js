@@ -184,7 +184,7 @@ function handleMessage(clientId, ws, msg) {
             handleAuth(clientId, ws, msg);
             break;
 
-        case 'start_timer':
+        case 'start':  // Changed from 'start_timer'
             if (client.role === 'viewer') {
                 sendError(ws, 'Permission denied - viewer mode');
                 return;
@@ -195,7 +195,17 @@ function handleMessage(clientId, ws, msg) {
             console.log('⏱️  Timer started');
             break;
 
-        case 'stop_timer':
+        case 'pause':  // Changed from 'stop_timer'
+            if (client.role === 'viewer') {
+                sendError(ws, 'Permission denied - viewer mode');
+                return;
+            }
+            timerRunning = false;
+            broadcast({ event: 'timer_update', running: false, remainingTime, totalDuration });
+            console.log('⏸️  Timer paused');
+            break;
+
+        case 'reset':  // Added reset action
             if (client.role === 'viewer') {
                 sendError(ws, 'Permission denied - viewer mode');
                 return;
@@ -203,7 +213,17 @@ function handleMessage(clientId, ws, msg) {
             timerRunning = false;
             remainingTime = 0;
             broadcast({ event: 'timer_update', running: false, remainingTime: 0, totalDuration });
-            console.log('⏹️  Timer stopped');
+            console.log('⏹️  Timer reset');
+            break;
+
+        case 'save_settings':  // Added save_settings
+            if (client.role === 'viewer') {
+                sendError(ws, 'Permission denied - viewer mode');
+                return;
+            }
+            // Mock settings save
+            sendMessage(ws, { event: 'settings_saved' });
+            console.log('💾 Settings saved');
             break;
 
         case 'set_duration':
@@ -216,7 +236,7 @@ function handleMessage(clientId, ws, msg) {
             console.log(`⏲️  Duration set to ${totalDuration}s`);
             break;
 
-        case 'set_scheduling':
+        case 'enable_scheduling':  // Changed from 'set_scheduling'
             if (client.role === 'viewer') {
                 sendError(ws, 'Permission denied - viewer mode');
                 return;
@@ -543,16 +563,6 @@ function handleMessage(clientId, ws, msg) {
                 message: `Sync complete: ${autoImported} imported, ${autoSkipped} skipped`
             });
             console.log(`🔄 Hello Club sync: ${autoImported} imported, ${autoSkipped} skipped`);
-            break;
-
-        case 'enable_scheduling':
-            if (client.role === 'viewer') {
-                sendError(ws, 'Permission denied - viewer mode');
-                return;
-            }
-            schedulingEnabled = msg.enabled === true;
-            broadcast({ event: 'scheduling_enabled', enabled: schedulingEnabled });
-            console.log(`📅 Scheduling ${schedulingEnabled ? 'enabled' : 'disabled'}`);
             break;
 
         default:
