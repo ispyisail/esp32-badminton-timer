@@ -1237,7 +1237,7 @@ function connectWebSocket() {
 
     console.log('Connecting to WebSocket...');
     showLoadingOverlay('Connecting to timer...');
-    socket = new WebSocket(`ws://${window.location.hostname}/ws`);
+    socket = new WebSocket(`ws://${window.location.host}/ws`);
 
     socket.onopen = () => {
         console.log('WebSocket connected');
