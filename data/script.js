@@ -920,6 +920,12 @@ function updateNTPStatus(data) {
         let tooltip = 'Time synced via NTP';
         if (data.timezone) {
             tooltip += `\nTimezone: ${data.timezone}`;
+
+            // Update timezone dropdown if present
+            const timezoneSelect = document.getElementById('timezone-select');
+            if (timezoneSelect) {
+                timezoneSelect.value = data.timezone;
+            }
         }
         if (data.autoSyncInterval) {
             tooltip += `\nAuto-sync: every ${data.autoSyncInterval} min`;
@@ -942,6 +948,28 @@ function initializeEventListeners() {
     breakTimerEnableInput.addEventListener('change', sendSettings);
     sirenLengthInput.addEventListener('change', sendSettings);
     sirenPauseInput.addEventListener('change', sendSettings);
+
+    // Timezone dropdown (admin only)
+    const timezoneSelect = document.getElementById('timezone-select');
+    if (timezoneSelect) {
+        timezoneSelect.addEventListener('change', () => {
+            if (userRole !== 'admin') {
+                showTemporaryMessage('Only administrators can change timezone', 'error');
+                return;
+            }
+
+            const newTimezone = timezoneSelect.value;
+            if (confirm(`Change timezone to ${newTimezone}?\n\nThis will affect all scheduled events and time display.`)) {
+                sendWebSocketMessage({
+                    action: 'set_timezone',
+                    timezone: newTimezone
+                });
+            } else {
+                // Revert to current value from NTP status
+                updateNTPStatus({ synced: true, timezone: timezoneSelect.dataset.currentTimezone || 'Pacific/Auckland' });
+            }
+        });
+    }
 
     // --- Authentication event listeners ---
     if (loginBtn) {
@@ -1288,6 +1316,15 @@ function connectWebSocket() {
                 showTemporaryMessage("Password changed successfully", "success");
                 if (changeOldPasswordInput) changeOldPasswordInput.value = '';
                 if (changeNewPasswordInput) changeNewPasswordInput.value = '';
+                break;
+
+            case 'timezone_changed':
+                showTemporaryMessage(`Timezone updated to ${data.timezone}`, "success");
+                // Store current timezone in dataset for reverting if needed
+                const timezoneSelect = document.getElementById('timezone-select');
+                if (timezoneSelect) {
+                    timezoneSelect.dataset.currentTimezone = data.timezone;
+                }
                 break;
 
             case 'factory_reset_complete':

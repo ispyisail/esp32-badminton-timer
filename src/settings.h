@@ -1,5 +1,6 @@
 #pragma once
 
+#include <Arduino.h>
 #include <Preferences.h>
 #include "timer.h"
 #include "siren.h"
@@ -38,6 +39,30 @@ public:
      */
     bool clear();
 
+    /**
+     * @brief Get configured timezone
+     * @return IANA timezone string (e.g., "Pacific/Auckland")
+     */
+    String getTimezone() const { return timezone; }
+
+    /**
+     * @brief Set and save timezone
+     * @param tz IANA timezone string (e.g., "Europe/London")
+     * @return True if saved successfully
+     */
+    bool setTimezone(const String& tz);
+
 private:
     Preferences preferences;
+    String timezone;
+
+    /**
+     * @brief Load timezone from NVS
+     */
+    void loadTimezone();
+
+    /**
+     * @brief Save timezone to NVS
+     */
+    void saveTimezone();
 };

@@ -478,6 +478,49 @@ body::before {
     font-weight: 500;
 }
 
+/* --- Timezone Dropdown --- */
+.timezone-dropdown {
+    width: 100%;
+    max-width: 350px;
+    padding: 10px 12px;
+    font-size: 0.95em;
+    border: 2px solid #e5e7eb;
+    border-radius: var(--border-radius-sm);
+    background: white;
+    color: var(--text-primary);
+    font-family: inherit;
+    cursor: pointer;
+    transition: border-color var(--transition-fast);
+}
+
+.timezone-dropdown:hover {
+    border-color: var(--primary-color);
+}
+
+.timezone-dropdown:focus {
+    outline: none;
+    border-color: var(--primary-color);
+    box-shadow: 0 0 0 3px rgba(0, 102, 204, 0.1);
+}
+
+.setting-hint {
+    display: block;
+    font-size: 0.8em;
+    color: var(--text-secondary);
+    margin-top: 6px;
+    font-style: italic;
+}
+
+.setting-item:has(.timezone-dropdown) {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+}
+
+.setting-item:has(.timezone-dropdown) label {
+    width: 100%;
+}
+
 /* --- Modern Toggle Switch --- */
 .switch {
     position: relative;
