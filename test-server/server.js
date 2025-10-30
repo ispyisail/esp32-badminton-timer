@@ -166,6 +166,19 @@ wss.on('connection', (ws) => {
         enabled: schedulingEnabled
     });
 
+    // Send initial settings
+    sendMessage(ws, {
+        event: 'settings',
+        settings: {
+            gameDuration: totalDuration,
+            breakDuration: 60000, // 60 seconds default
+            numRounds: numRounds,
+            breakTimerEnabled: false,
+            sirenLength: 5000,
+            sirenPause: 1000
+        }
+    });
+
     ws.on('message', (data) => {
         try {
             const msg = JSON.parse(data);
@@ -257,8 +270,32 @@ function handleMessage(clientId, ws, msg) {
                 sendError(ws, 'Permission denied - viewer mode');
                 return;
             }
-            // Mock settings save
+            // Extract and apply settings
+            if (msg.settings) {
+                if (msg.settings.gameDuration) {
+                    // gameDuration comes in milliseconds from client
+                    totalDuration = msg.settings.gameDuration;
+                    console.log(`⏲️  Game duration updated to ${totalDuration / 60000} minutes`);
+                }
+                if (msg.settings.numRounds) {
+                    numRounds = msg.settings.numRounds;
+                    console.log(`🔢 Number of rounds updated to ${numRounds}`);
+                }
+            }
             sendMessage(ws, { event: 'settings_saved' });
+
+            // Send updated settings back to client
+            sendMessage(ws, {
+                event: 'settings',
+                settings: {
+                    gameDuration: totalDuration,
+                    breakDuration: msg.settings?.breakDuration || 60000,
+                    numRounds: numRounds,
+                    breakTimerEnabled: msg.settings?.breakTimerEnabled || false,
+                    sirenLength: msg.settings?.sirenLength || 5000,
+                    sirenPause: msg.settings?.sirenPause || 1000
+                }
+            });
             console.log('💾 Settings saved');
             break;
 
