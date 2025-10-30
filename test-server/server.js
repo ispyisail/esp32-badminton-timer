@@ -66,6 +66,9 @@ let operators = [
     { username: "operator2", password: "test456" }
 ];
 
+// System timezone
+let currentTimezone = 'Pacific/Auckland';
+
 // Hello Club mock data
 let helloClubSettings = {
     apiKey: '***configured***',
@@ -183,7 +186,7 @@ wss.on('connection', (ws) => {
         event: 'ntp_status',
         synced: true,
         time: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true }),
-        timezone: 'Pacific/Auckland',
+        timezone: currentTimezone,
         dateTime: new Date().toISOString().replace('T', ' ').substring(0, 19),
         autoSyncInterval: 30
     });
@@ -403,9 +406,19 @@ function handleMessage(clientId, ws, msg) {
                 return;
             }
             const newTimezone = msg.timezone || 'Pacific/Auckland';
+            currentTimezone = newTimezone; // Update server timezone
             sendMessage(ws, {
                 event: 'timezone_changed',
                 timezone: newTimezone
+            });
+            // Broadcast updated NTP status to all clients
+            broadcast({
+                event: 'ntp_status',
+                synced: true,
+                time: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true }),
+                timezone: currentTimezone,
+                dateTime: new Date().toISOString().replace('T', ' ').substring(0, 19),
+                autoSyncInterval: 30
             });
             console.log(`🌍 Timezone changed to: ${newTimezone}`);
             break;
@@ -418,6 +431,7 @@ function handleMessage(clientId, ws, msg) {
             schedules = [];
             operators = [];
             schedulingEnabled = false;
+            currentTimezone = 'Pacific/Auckland'; // Reset timezone to default
             sendMessage(ws, { event: 'factory_reset_complete' });
             console.log('🔄 Factory reset completed');
             break;
@@ -777,7 +791,7 @@ setInterval(() => {
         event: 'ntp_status',
         synced: true,
         time: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true }),
-        timezone: 'Pacific/Auckland',
+        timezone: currentTimezone,
         dateTime: new Date().toISOString().replace('T', ' ').substring(0, 19),
         autoSyncInterval: 30
     });

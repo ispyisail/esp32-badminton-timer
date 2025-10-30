@@ -925,6 +925,8 @@ function updateNTPStatus(data) {
             const timezoneSelect = document.getElementById('timezone-select');
             if (timezoneSelect) {
                 timezoneSelect.value = data.timezone;
+                // Also store in dataset for revert functionality
+                timezoneSelect.dataset.currentTimezone = data.timezone;
             }
         }
         if (data.autoSyncInterval) {
