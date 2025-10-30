@@ -476,8 +476,63 @@ Result: Timer will automatically start every Tuesday and Thursday at 7:00 PM for
 2. Check password is correct (case-sensitive)
 3. For operators: Verify account was created by admin
 4. For admin: Verify you're using correct admin password
-5. Try factory reset if admin password forgotten (data loss!)
+5. If admin password is forgotten, see "Hardware Factory Reset" below
 6. Check serial monitor for authentication logs
+
+---
+
+### Hardware Factory Reset (Emergency Recovery)
+
+**⚠️ WARNING: This will delete ALL data including:**
+- All user accounts (admin and operators)
+- All schedules
+- All settings
+- Hello Club integration settings
+
+**When to use:**
+- Admin password is forgotten and cannot be recovered
+- System is unresponsive or corrupted
+- Need to completely start over
+
+**How to perform hardware factory reset:**
+
+1. **Locate the BOOT button** on your ESP32 board
+   - Usually labeled "BOOT", "IO0", or "FLASH"
+   - Typically located near the USB port
+   - Often colored blue or black
+
+2. **Press and HOLD the BOOT button for 10 seconds**
+   - Don't release the button early
+   - You'll hear/see feedback every 2 seconds:
+     - Serial monitor shows countdown: "Factory reset: 2 seconds...", "Factory reset: 4 seconds...", etc.
+     - Relay clicks briefly (if siren connected, you'll hear short beeps)
+
+3. **After 10 seconds**, factory reset will trigger:
+   - Serial monitor shows: "FACTORY RESET TRIGGERED!"
+   - Relay/siren will beep 5 times rapidly (1 second total)
+   - Device displays: "Factory reset complete. Restarting in 3 seconds..."
+   - ESP32 automatically restarts
+
+4. **After restart:**
+   - All settings are back to factory defaults
+   - Admin password is reset to: `admin` / `admin`
+   - Timer defaults: 21 minutes, 60 second break, 3 rounds
+   - All schedules deleted
+   - All operator accounts removed
+
+5. **Immediately change the admin password** after factory reset
+
+**Tips:**
+- Hold the button steady for the full 10 seconds
+- If you release before 10 seconds, the reset is cancelled (no data loss)
+- Watch the serial monitor if possible to see progress
+- Make sure the device has power during the entire process
+
+**Can't find the BOOT button?**
+- Check your ESP32 board documentation
+- Common ESP32 boards (NodeMCU, DevKit, WROOM) all have a BOOT button
+- It's usually next to the "EN" (Enable/Reset) button
+- GPIO 0 is the BOOT button pin
 
 ---
 
