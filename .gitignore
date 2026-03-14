@@ -4,4 +4,7 @@
 
 # Environment variables
 .env
-src/wifi_credentials.h 
+src/wifi_credentials.h
+
+# Claude Code
+.claude/

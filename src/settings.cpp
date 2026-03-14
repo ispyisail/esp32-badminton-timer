@@ -2,24 +2,31 @@
 #include "config.h"
 
 Settings::Settings()
-    : timezone(TIMEZONE_LOCATION) // Default from config
+    : timezone(TIMEZONE_LOCATION)
+    , hcDefaultDuration(DEFAULT_GAME_DURATION / 60000)
+    , guestWifiPass("")
+    , guestWifiEnc("WPA")
+    , guestWifiSsid("")
 {
     loadTimezone();
+    loadQrSettings();
+
+    // Load HC default duration
+    if (preferences.begin(PREFERENCES_NAMESPACE, true)) {
+        hcDefaultDuration = preferences.getUShort(PREF_KEY_HC_DEFAULT_DURATION, DEFAULT_GAME_DURATION / 60000);
+        preferences.end();
+    }
 }
 
 bool Settings::load(Timer& timer, Siren& siren) {
-    if (!preferences.begin(PREFERENCES_NAMESPACE, true)) { // Read-only mode
+    if (!preferences.begin(PREFERENCES_NAMESPACE, true)) {
         DEBUG_PRINTLN("Failed to open preferences for reading. Using defaults.");
         return false;
     }
 
-    // Load timer settings
     timer.setGameDuration(preferences.getULong(PREF_KEY_GAME_DURATION, DEFAULT_GAME_DURATION));
-    timer.setBreakDuration(preferences.getULong(PREF_KEY_BREAK_DURATION, DEFAULT_BREAK_DURATION));
     timer.setNumRounds(preferences.getUInt(PREF_KEY_NUM_ROUNDS, DEFAULT_NUM_ROUNDS));
-    timer.setBreakTimerEnabled(preferences.getBool(PREF_KEY_BREAK_ENABLED, DEFAULT_BREAK_TIMER_ENABLED));
 
-    // Load siren settings
     siren.setBlastLength(preferences.getULong(PREF_KEY_SIREN_LENGTH, DEFAULT_SIREN_LENGTH));
     siren.setBlastPause(preferences.getULong(PREF_KEY_SIREN_PAUSE, DEFAULT_SIREN_PAUSE));
 
@@ -27,9 +34,7 @@ bool Settings::load(Timer& timer, Siren& siren) {
 
     DEBUG_PRINTLN("Settings loaded successfully");
     DEBUG_PRINTF("  Game duration: %lu ms\n", timer.getGameDuration());
-    DEBUG_PRINTF("  Break duration: %lu ms\n", timer.getBreakDuration());
     DEBUG_PRINTF("  Num rounds: %u\n", timer.getNumRounds());
-    DEBUG_PRINTF("  Break timer enabled: %d\n", timer.isBreakTimerEnabled());
     DEBUG_PRINTF("  Siren length: %lu ms\n", siren.getBlastLength());
     DEBUG_PRINTF("  Siren pause: %lu ms\n", siren.getBlastPause());
 
@@ -37,18 +42,14 @@ bool Settings::load(Timer& timer, Siren& siren) {
 }
 
 bool Settings::save(const Timer& timer, const Siren& siren) {
-    if (!preferences.begin(PREFERENCES_NAMESPACE, false)) { // Read-write mode
+    if (!preferences.begin(PREFERENCES_NAMESPACE, false)) {
         DEBUG_PRINTLN("Failed to open preferences for writing.");
         return false;
     }
 
-    // Save timer settings
     preferences.putULong(PREF_KEY_GAME_DURATION, timer.getGameDuration());
-    preferences.putULong(PREF_KEY_BREAK_DURATION, timer.getBreakDuration());
     preferences.putUInt(PREF_KEY_NUM_ROUNDS, timer.getNumRounds());
-    preferences.putBool(PREF_KEY_BREAK_ENABLED, timer.isBreakTimerEnabled());
 
-    // Save siren settings
     preferences.putULong(PREF_KEY_SIREN_LENGTH, siren.getBlastLength());
     preferences.putULong(PREF_KEY_SIREN_PAUSE, siren.getBlastPause());
 
@@ -77,7 +78,7 @@ bool Settings::clear() {
 }
 
 void Settings::loadTimezone() {
-    if (!preferences.begin(PREFERENCES_NAMESPACE, true)) { // Read-only
+    if (!preferences.begin(PREFERENCES_NAMESPACE, true)) {
         DEBUG_PRINTLN("Failed to open preferences for reading timezone. Using default.");
         timezone = TIMEZONE_LOCATION;
         return;
@@ -90,7 +91,7 @@ void Settings::loadTimezone() {
 }
 
 void Settings::saveTimezone() {
-    if (!preferences.begin(PREFERENCES_NAMESPACE, false)) { // Read-write
+    if (!preferences.begin(PREFERENCES_NAMESPACE, false)) {
         DEBUG_PRINTLN("Failed to open preferences for writing timezone.");
         return;
     }
@@ -107,13 +108,11 @@ bool Settings::setTimezone(const String& tz) {
         return false;
     }
 
-    // Validate IANA timezone format (must contain '/' e.g., "America/New_York")
     if (tz.indexOf('/') == -1) {
         DEBUG_PRINTLN("Invalid timezone format: must be IANA format (e.g., 'Region/City')");
         return false;
     }
 
-    // Additional validation: reasonable length (IANA timezones are typically 10-40 chars)
     if (tz.length() < 3 || tz.length() > 50) {
         DEBUG_PRINTLN("Invalid timezone: length out of range");
         return false;
@@ -123,5 +122,47 @@ bool Settings::setTimezone(const String& tz) {
     saveTimezone();
 
     DEBUG_PRINTF("Timezone set to: %s\n", timezone.c_str());
+    return true;
+}
+
+bool Settings::setHcDefaultDuration(uint16_t minutes) {
+    if (minutes < 1 || minutes > 120) return false;
+    hcDefaultDuration = minutes;
+
+    if (!preferences.begin(PREFERENCES_NAMESPACE, false)) return false;
+    preferences.putUShort(PREF_KEY_HC_DEFAULT_DURATION, hcDefaultDuration);
+    preferences.end();
+
+    DEBUG_PRINTF("HC default duration set to: %d min\n", hcDefaultDuration);
+    return true;
+}
+
+void Settings::loadQrSettings() {
+    if (!preferences.begin(PREFERENCES_NAMESPACE, true)) {
+        return;
+    }
+
+    guestWifiPass = preferences.getString("guestWifiPass", "");
+    guestWifiEnc = preferences.getString("guestWifiEnc", "WPA");
+    guestWifiSsid = preferences.getString("guestWifiSsid", "");
+    preferences.end();
+}
+
+bool Settings::saveQrSettings(const String& pass, const String& enc, const String& ssid) {
+    if (!preferences.begin(PREFERENCES_NAMESPACE, false)) {
+        DEBUG_PRINTLN("Failed to open preferences for writing QR settings.");
+        return false;
+    }
+
+    guestWifiPass = pass;
+    guestWifiEnc = enc;
+    guestWifiSsid = ssid;
+
+    preferences.putString("guestWifiPass", guestWifiPass);
+    preferences.putString("guestWifiEnc", guestWifiEnc);
+    preferences.putString("guestWifiSsid", guestWifiSsid);
+    preferences.end();
+
+    DEBUG_PRINTLN("QR settings saved");
     return true;
 }

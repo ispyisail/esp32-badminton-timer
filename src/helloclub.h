@@ -3,108 +3,81 @@
 #include <Arduino.h>
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
+#include <Preferences.h>
 #include <vector>
 #include <ezTime.h>
-#include "schedule.h"
 
-/**
- * Hello Club Event Structure
- * Represents an event from the Hello Club API
- */
-struct HelloClubEvent {
-    String id;
-    String name;
-    String startDate;      // ISO 8601 format
-    String endDate;        // ISO 8601 format
-    String activityName;
-    String categoryName;
-    int durationMinutes;
+// Cached event from Hello Club API
+struct CachedEvent {
+    String id;              // HC event ID (first 12 chars)
+    String name;            // Event name (max 40 chars)
+    time_t startTime;       // UTC epoch
+    time_t endTime;         // UTC epoch — from HC booking slot
+    uint16_t durationMin;   // Game duration (from timer: tag or default)
+    uint8_t numRounds;      // Rounds (from timer: tag or default)
+    bool triggered;         // Already auto-started
 };
 
-/**
- * Hello Club API Client
- * Handles communication with Hello Club API for event management
- */
 class HelloClubClient {
 public:
     HelloClubClient();
 
-    /**
-     * Set the API key for Hello Club authentication
-     * @param apiKey The API key from Hello Club settings
-     */
     void setApiKey(const String& apiKey);
+    void setDefaults(uint16_t defaultDuration, uint8_t defaultRounds);
 
-    /**
-     * Fetch events from Hello Club within date range
-     * @param daysAhead Number of days ahead to fetch events for
-     * @param categoryFilter Comma-separated list of categories to filter (empty = all)
-     * @param events Output vector to store fetched events
-     * @return true if successful, false otherwise
-     */
-    bool fetchEvents(int daysAhead, const String& categoryFilter, std::vector<HelloClubEvent>& events);
+    // Fetch events with timer: tag from HC API, update cache
+    // Returns true if fetch succeeded (cache updated)
+    bool fetchAndCacheEvents(int daysAhead, Timezone& tz);
 
-    /**
-     * Fetch all available categories from upcoming events
-     * @param daysAhead Number of days ahead to scan for categories
-     * @param categories Output vector to store unique category names
-     * @return true if successful, false otherwise
-     */
-    bool fetchAvailableCategories(int daysAhead, std::vector<String>& categories);
+    // Load cached events from NVS (for boot without internet)
+    void loadFromNVS();
 
-    /**
-     * Convert Hello Club event to Schedule struct
-     * @param event The Hello Club event to convert
-     * @param ownerUsername Username to assign as schedule owner
-     * @param schedule Output schedule struct
-     * @param localTz Local timezone for conversion (default Pacific/Auckland)
-     * @return true if conversion successful, false otherwise
-     */
-    bool convertEventToSchedule(const HelloClubEvent& event, const String& ownerUsername, Schedule& schedule, Timezone* localTz = nullptr);
+    // Save cached events to NVS
+    void saveToNVS();
 
-    /**
-     * Get last error message
-     * @return Error message from last failed operation
-     */
-    String getLastError() const;
+    // Check if any event should auto-trigger now
+    // Returns pointer to event if trigger should fire, nullptr otherwise
+    CachedEvent* checkAutoTrigger(Timezone& tz);
+
+    // Mark event as triggered and save
+    void markTriggered(const String& id);
+
+    // Purge expired events (endTime < now)
+    void purgeExpired(Timezone& tz);
+
+    // Get all cached events (for WebSocket broadcast)
+    const std::vector<CachedEvent>& getCachedEvents() const { return events; }
+
+    // Get last sync time (millis)
+    unsigned long getLastSyncTime() const { return lastSyncTime; }
+
+    // Get last error
+    String getLastError() const { return lastError; }
+
+    // Check if API key is configured
+    bool isConfigured() const { return !apiKey.isEmpty(); }
 
 private:
     String apiKey;
     String lastError;
+    unsigned long lastSyncTime;
+    uint16_t defaultDurationMin;
+    uint8_t defaultNumRounds;
+    std::vector<CachedEvent> events;
+
+    static const int HC_MAX_EVENTS = 20;
+    static const char* NVS_NAMESPACE;
+    static const char* NVS_EVENTS_KEY;
+
     const String baseUrl = "https://api.helloclub.com";
 
-    /**
-     * Make HTTP GET request to Hello Club API
-     * @param endpoint API endpoint (e.g., "/event")
-     * @param params URL parameters
-     * @param responseDoc Output JSON document
-     * @return true if successful, false otherwise
-     */
+    // Make HTTP request with retry
     bool makeRequest(const String& endpoint, const String& params, DynamicJsonDocument& responseDoc);
 
-    /**
-     * Parse ISO 8601 date to day of week and time
-     * @param isoDate ISO 8601 date string
-     * @param dayOfWeek Output day of week (0=Sunday, 6=Saturday)
-     * @param hour Output hour (0-23)
-     * @param minute Output minute (0-59)
-     * @return true if parsing successful, false otherwise
-     */
-    bool parseISODate(const String& isoDate, int& dayOfWeek, int& hour, int& minute);
+    // Parse timer: tag from event description
+    // Returns true if timer: tag found; sets duration and rounds
+    bool parseTimerTag(const String& description, uint16_t& duration, uint8_t& rounds);
 
-    /**
-     * Calculate duration between two ISO 8601 dates in minutes
-     * @param startDate ISO 8601 start date
-     * @param endDate ISO 8601 end date
-     * @return Duration in minutes
-     */
-    int calculateDuration(const String& startDate, const String& endDate);
-
-    /**
-     * Check if event matches category filter
-     * @param categoryName Category name from event
-     * @param filterList Comma-separated list of categories
-     * @return true if matches (or filter empty), false otherwise
-     */
-    bool matchesCategory(const String& categoryName, const String& filterList);
+    // Parse ISO 8601 date to time_t (UTC epoch)
+    time_t parseISOToEpoch(const String& isoDate);
 };

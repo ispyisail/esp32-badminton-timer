@@ -21,25 +21,20 @@ constexpr unsigned long BUTTON_DEBOUNCE_MS = 50;              // Button debounce
 // =============================================================================
 
 // Default timer settings
-constexpr unsigned long DEFAULT_GAME_DURATION = 21 * 60 * 1000;  // 21 minutes in milliseconds
-constexpr unsigned long DEFAULT_BREAK_DURATION = 60 * 1000;      // 60 seconds in milliseconds
+constexpr unsigned long DEFAULT_GAME_DURATION = 12 * 60 * 1000;  // 12 minutes in milliseconds
 constexpr unsigned int DEFAULT_NUM_ROUNDS = 3;                   // 3 rounds per match
-constexpr bool DEFAULT_BREAK_TIMER_ENABLED = true;               // Break timer enabled by default
 constexpr unsigned long DEFAULT_SIREN_LENGTH = 1000;             // 1 second siren blast
 constexpr unsigned long DEFAULT_SIREN_PAUSE = 1000;              // 1 second pause between blasts
 
 // Validation limits for timer settings
 constexpr unsigned long MIN_GAME_DURATION_MIN = 1;               // Minimum game duration (minutes)
 constexpr unsigned long MAX_GAME_DURATION_MIN = 120;             // Maximum game duration (minutes)
-constexpr unsigned long MIN_BREAK_DURATION_SEC = 1;              // Minimum break duration (seconds)
-constexpr unsigned long MAX_BREAK_DURATION_SEC = 3600;           // Maximum break duration (seconds)
 constexpr unsigned int MIN_ROUNDS = 1;                           // Minimum number of rounds
 constexpr unsigned int MAX_ROUNDS = 20;                          // Maximum number of rounds
 constexpr unsigned long MIN_SIREN_LENGTH_MS = 100;               // Minimum siren blast length
 constexpr unsigned long MAX_SIREN_LENGTH_MS = 10000;             // Maximum siren blast length
 constexpr unsigned long MIN_SIREN_PAUSE_MS = 100;                // Minimum pause between blasts
 constexpr unsigned long MAX_SIREN_PAUSE_MS = 10000;              // Maximum pause between blasts
-constexpr float MAX_BREAK_PERCENTAGE = 0.5;                      // Break can be max 50% of game duration
 
 // =============================================================================
 // Network Configuration
@@ -90,11 +85,10 @@ constexpr const char* PREFERENCES_NAMESPACE = "timer";
 
 // Preferences keys
 constexpr const char* PREF_KEY_GAME_DURATION = "gameDuration";
-constexpr const char* PREF_KEY_BREAK_DURATION = "breakDuration";
 constexpr const char* PREF_KEY_NUM_ROUNDS = "numRounds";
-constexpr const char* PREF_KEY_BREAK_ENABLED = "breakEnabled";
 constexpr const char* PREF_KEY_SIREN_LENGTH = "sirenLength";
 constexpr const char* PREF_KEY_SIREN_PAUSE = "sirenPause";
+constexpr const char* PREF_KEY_HC_DEFAULT_DURATION = "hcDefDur";
 
 // =============================================================================
 // System Configuration
@@ -130,19 +124,15 @@ constexpr int MAX_MESSAGES_PER_SECOND = 10;                      // Max messages
 constexpr int MIN_PASSWORD_LENGTH = 8;                           // Minimum password length (increased for security)
 
 // =============================================================================
-// Schedule Configuration
-// =============================================================================
-
-// Schedule validation limits
-constexpr int MIN_SCHEDULE_DURATION_MIN = 1;                     // Minimum 1 minute
-constexpr int MAX_SCHEDULE_DURATION_MIN = 180;                   // Maximum 180 minutes (3 hours)
-
-// Schedule trigger de-bounce
-constexpr int SCHEDULE_TRIGGER_DEBOUNCE_MIN = 2;                 // Don't re-trigger within 2 minutes
-
-// =============================================================================
 // Hello Club API Configuration
 // =============================================================================
+
+// Polling intervals
+constexpr unsigned long HELLOCLUB_POLL_INTERVAL_MS = 3600000;    // Poll every 1 hour
+constexpr unsigned long HELLOCLUB_RETRY_INTERVAL_MS = 300000;    // Retry in 5 minutes on failure
+constexpr int HELLOCLUB_DAYS_AHEAD = 7;                          // Look ahead 7 days
+constexpr int HELLOCLUB_MAX_CACHED_EVENTS = 20;                  // Max cached events
+constexpr unsigned long HELLOCLUB_TRIGGER_WINDOW_MS = 120000;    // 2 minute trigger window
 
 // API retry settings
 constexpr int HELLOCLUB_MAX_RETRIES = 3;                         // Maximum retry attempts
@@ -182,6 +172,6 @@ constexpr bool ENABLE_MDNS = true;                               // Enable mDNS 
 // Version Information
 // =============================================================================
 
-constexpr const char* FIRMWARE_VERSION = "2.0.0";
+constexpr const char* FIRMWARE_VERSION = "3.0.0";
 constexpr const char* BUILD_DATE = __DATE__;
 constexpr const char* BUILD_TIME = __TIME__;

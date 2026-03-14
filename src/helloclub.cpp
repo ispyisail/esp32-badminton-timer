@@ -1,11 +1,26 @@
 #include "helloclub.h"
+#include "config.h"
 #include <WiFiClientSecure.h>
 #include <time.h>
 
-// Let's Encrypt Root CA Certificate (ISRG Root X1)
-// Valid until 2035-06-04
-// This root cert covers most major APIs including helloclub.com
+// Root CA Certificates — Google Trust Services Root R4 + Let's Encrypt ISRG Root X1
+// Multiple roots for resilience against CA changes
 const char* rootCACertificate = \
+// Google Trust Services Root R4 (ECDSA) — used by api.helloclub.com — valid until 2036-06-22
+"-----BEGIN CERTIFICATE-----\n" \
+"MIICCTCCAY6gAwIBAgINAgPlwGjvYxqccpBQUjAKBggqhkjOPQQDAzBHMQswCQYD\n" \
+"VQQGEwJVUzEiMCAGA1UEChMZR29vZ2xlIFRydXN0IFNlcnZpY2VzIExMQzEUMBIG\n" \
+"A1UEAxMLR1RTIFJvb3QgUjQwHhcNMTYwNjIyMDAwMDAwWhcNMzYwNjIyMDAwMDAw\n" \
+"WjBHMQswCQYDVQQGEwJVUzEiMCAGA1UEChMZR29vZ2xlIFRydXN0IFNlcnZpY2Vz\n" \
+"IExMQzEUMBIGA1UEAxMLR1RTIFJvb3QgUjQwdjAQBgcqhkjOPQIBBgUrgQQAIgNi\n" \
+"AATzdHOnaItgrkO4NcWBMHtLSZ37wWHO5t5GvWvVYRg1rkDdc/eJkTBa6zzuhXyi\n" \
+"QHY7qca4R9gq55KRanPpsXI5nymfopjTX15YhmUPoYRlBtHci8nHc8iMai/lxKvR\n" \
+"HYqjQjBAMA4GA1UdDwEB/wQEAwIBhjAPBgNVHRMBAf8EBTADAQH/MB0GA1UdDgQW\n" \
+"BBSATNbrdP9JNqPV2Py1PsVq8JQdjDAKBggqhkjOPQQDAwNpADBmAjEA6ED/g94D\n" \
+"9J+uHXqnLrmvT/aDHQ4thQEd0dlq7A/Cr8deVl5c1RxYIigL9zC2L7F8AjEA8GE8\n" \
+"p/SgguMh1YQdc4acLa/KNJvxn7kjNuK8YAOdgLOaVsjh4rsUecrNIdSUtUlD\n" \
+"-----END CERTIFICATE-----\n" \
+// Let's Encrypt ISRG Root X1 — valid until 2035-06-04
 "-----BEGIN CERTIFICATE-----\n" \
 "MIIFazCCA1OgAwIBAgIRAIIQz7DSQONZRGPgu2OCiwAwDQYJKoZIhvcNAQELBQAw\n" \
 "TzELMAkGA1UEBhMCVVMxKTAnBgNVBAoTIEludGVybmV0IFNlY3VyaXR5IFJlc2Vh\n" \
@@ -38,17 +53,25 @@ const char* rootCACertificate = \
 "emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=\n" \
 "-----END CERTIFICATE-----\n";
 
-HelloClubClient::HelloClubClient() {
-    apiKey = "";
-    lastError = "";
+const char* HelloClubClient::NVS_NAMESPACE = "helloclub";
+const char* HelloClubClient::NVS_EVENTS_KEY = "events";
+
+HelloClubClient::HelloClubClient()
+    : apiKey("")
+    , lastError("")
+    , lastSyncTime(0)
+    , defaultDurationMin(12)
+    , defaultNumRounds(3)
+{
 }
 
 void HelloClubClient::setApiKey(const String& key) {
     apiKey = key;
 }
 
-String HelloClubClient::getLastError() const {
-    return lastError;
+void HelloClubClient::setDefaults(uint16_t defaultDuration, uint8_t defaultRounds) {
+    defaultDurationMin = defaultDuration;
+    defaultNumRounds = defaultRounds;
 }
 
 bool HelloClubClient::makeRequest(const String& endpoint, const String& params, DynamicJsonDocument& responseDoc) {
@@ -58,7 +81,7 @@ bool HelloClubClient::makeRequest(const String& endpoint, const String& params, 
     }
 
     const int MAX_RETRIES = 3;
-    const int RETRY_DELAYS[] = {1000, 2000, 4000}; // Exponential backoff
+    const int RETRY_DELAYS[] = {1000, 2000, 4000};
 
     String url = baseUrl + endpoint;
     if (!params.isEmpty()) {
@@ -66,7 +89,7 @@ bool HelloClubClient::makeRequest(const String& endpoint, const String& params, 
     }
 
     for (int attempt = 0; attempt < MAX_RETRIES; attempt++) {
-        Serial.printf("HelloClub API Request (attempt %d/%d): %s\n", attempt + 1, MAX_RETRIES, url.c_str());
+        DEBUG_PRINTF("HelloClub API Request (attempt %d/%d): %s\n", attempt + 1, MAX_RETRIES, url.c_str());
 
         WiFiClientSecure client;
         client.setCACert(rootCACertificate);
@@ -99,13 +122,12 @@ bool HelloClubClient::makeRequest(const String& endpoint, const String& params, 
                 return false;
             }
 
-            Serial.printf("HelloClub API: Success on attempt %d\n", attempt + 1);
+            DEBUG_PRINTF("HelloClub API: Success on attempt %d\n", attempt + 1);
             return true;
         }
 
         http.end();
 
-        // Check if retryable
         bool shouldRetry = (httpCode == 429 || httpCode == 503 || httpCode == 504 || httpCode < 0);
 
         lastError = "HTTP error: " + String(httpCode);
@@ -117,19 +139,118 @@ bool HelloClubClient::makeRequest(const String& endpoint, const String& params, 
         }
 
         if (!shouldRetry || attempt == MAX_RETRIES - 1) {
-            Serial.printf("HelloClub API: Failed - %s\n", lastError.c_str());
+            DEBUG_PRINTF("HelloClub API: Failed - %s\n", lastError.c_str());
             return false;
         }
 
-        Serial.printf("HelloClub API: Retrying in %dms...\n", RETRY_DELAYS[attempt]);
+        DEBUG_PRINTF("HelloClub API: Retrying in %dms...\n", RETRY_DELAYS[attempt]);
         delay(RETRY_DELAYS[attempt]);
     }
 
     return false;
 }
 
-bool HelloClubClient::fetchEvents(int daysAhead, const String& categoryFilter, std::vector<HelloClubEvent>& events) {
-    events.clear();
+bool HelloClubClient::parseTimerTag(const String& description, uint16_t& duration, uint8_t& rounds) {
+    // Look for "timer:" in description (case-insensitive)
+    String lower = description;
+    lower.toLowerCase();
+
+    int tagPos = lower.indexOf("timer:");
+    if (tagPos == -1) {
+        return false; // No timer tag = don't cache this event
+    }
+
+    // Extract the value after "timer:"
+    String value = description.substring(tagPos + 6);
+    value.trim();
+
+    // Truncate at newline or end
+    int nlPos = value.indexOf('\n');
+    if (nlPos > 0) value = value.substring(0, nlPos);
+    value.trim();
+
+    // "timer:enabled" or "timer:" -> use defaults, continuous mode
+    if (value.startsWith("enabled") || value.isEmpty()) {
+        duration = defaultDurationMin;
+        rounds = 0; // 0 = continuous (rounds repeat until event ends)
+        return true;
+    }
+
+    // "timer: 15min" -> custom duration, continuous unless rounds specified
+    duration = defaultDurationMin;
+    rounds = 0; // 0 = continuous by default
+
+    // Parse Xmin
+    int minPos = lower.indexOf("min", tagPos + 6);
+    if (minPos > tagPos + 6) {
+        String numStr = "";
+        for (int i = minPos - 1; i >= tagPos + 6; i--) {
+            char c = value.charAt(i - (tagPos + 6));
+            if (c >= '0' && c <= '9') {
+                numStr = String(c) + numStr;
+            } else {
+                break;
+            }
+        }
+        if (numStr.length() > 0) {
+            int val = numStr.toInt();
+            if (val >= 1 && val <= 120) {
+                duration = val;
+            }
+        }
+    }
+
+    // Parse Xrounds (optional — if omitted, continuous mode)
+    int roundPos = lower.indexOf("round", tagPos + 6);
+    if (roundPos > tagPos + 6) {
+        String numStr = "";
+        for (int i = roundPos - 1; i >= tagPos + 6; i--) {
+            char c = value.charAt(i - (tagPos + 6));
+            if (c >= '0' && c <= '9') {
+                numStr = String(c) + numStr;
+            } else {
+                break;
+            }
+        }
+        if (numStr.length() > 0) {
+            int val = numStr.toInt();
+            if (val >= 1 && val <= 20) {
+                rounds = val; // Non-zero = fixed round count
+            }
+        }
+    }
+
+    return true;
+}
+
+time_t HelloClubClient::parseISOToEpoch(const String& isoDate) {
+    if (isoDate.length() < 19) {
+        return 0;
+    }
+
+    struct tm tm;
+    memset(&tm, 0, sizeof(tm));
+    tm.tm_year = isoDate.substring(0, 4).toInt() - 1900;
+    tm.tm_mon = isoDate.substring(5, 7).toInt() - 1;
+    tm.tm_mday = isoDate.substring(8, 10).toInt();
+    tm.tm_hour = isoDate.substring(11, 13).toInt();
+    tm.tm_min = isoDate.substring(14, 16).toInt();
+    tm.tm_sec = isoDate.substring(17, 19).toInt();
+
+    // mktime interprets as local time, but we want UTC
+    // Use timegm equivalent
+    time_t result = mktime(&tm);
+    // Adjust for local timezone offset to get UTC
+    struct tm utc_check;
+    gmtime_r(&result, &utc_check);
+    time_t utc_result = mktime(&utc_check);
+    time_t offset = utc_result - result;
+    result -= offset;
+
+    return result;
+}
+
+bool HelloClubClient::fetchAndCacheEvents(int daysAhead, Timezone& tz) {
     lastError = "";
 
     // Calculate date range
@@ -146,250 +267,177 @@ bool HelloClubClient::fetchEvents(int daysAhead, const String& categoryFilter, s
     char toDate[30];
     strftime(toDate, sizeof(toDate), "%Y-%m-%dT%H:%M:%SZ", &timeinfo);
 
-    // Build request parameters
     String params = "fromDate=" + String(fromDate);
     params += "&toDate=" + String(toDate);
     params += "&sort=startDate";
-    params += "&limit=50"; // Limit to 50 events to avoid memory issues
+    params += "&limit=50";
 
-    // Make API request
-    DynamicJsonDocument responseDoc(16384); // 16KB buffer for response
+    DynamicJsonDocument responseDoc(16384);
     if (!makeRequest("/event", params, responseDoc)) {
         return false;
     }
 
-    // Parse events
     JsonArray eventsArray = responseDoc["events"].as<JsonArray>();
     if (eventsArray.isNull()) {
         lastError = "No events array in response";
         return false;
     }
 
-    Serial.print("HelloClub: Found ");
-    Serial.print(eventsArray.size());
-    Serial.println(" events");
+    DEBUG_PRINTF("HelloClub: Found %d events from API\n", eventsArray.size());
+
+    // Build new event list, keeping triggered state from existing cache
+    std::vector<CachedEvent> newEvents;
 
     for (JsonObject eventObj : eventsArray) {
-        HelloClubEvent event;
-
-        event.id = eventObj["id"].as<String>();
-        event.name = eventObj["name"].as<String>();
-        event.startDate = eventObj["startDate"].as<String>();
-        event.endDate = eventObj["endDate"].as<String>();
-
-        // Extract activity name
-        if (eventObj.containsKey("activity") && eventObj["activity"].is<JsonObject>()) {
-            event.activityName = eventObj["activity"]["name"].as<String>();
+        // Get description to check for timer: tag
+        String description = "";
+        if (eventObj.containsKey("description")) {
+            description = eventObj["description"].as<String>();
         }
 
-        // Extract first category name
-        if (eventObj.containsKey("categories") && eventObj["categories"].is<JsonArray>()) {
-            JsonArray categories = eventObj["categories"].as<JsonArray>();
-            if (categories.size() > 0 && categories[0].is<JsonObject>()) {
-                event.categoryName = categories[0]["name"].as<String>();
+        uint16_t duration;
+        uint8_t rounds;
+        if (!parseTimerTag(description, duration, rounds)) {
+            continue; // Skip events without timer: tag
+        }
+
+        if (newEvents.size() >= HC_MAX_EVENTS) {
+            break;
+        }
+
+        CachedEvent evt;
+        String fullId = eventObj["id"].as<String>();
+        evt.id = fullId.substring(0, 12);
+        evt.name = eventObj["name"].as<String>();
+        if (evt.name.length() > 40) {
+            evt.name = evt.name.substring(0, 40);
+        }
+
+        evt.startTime = parseISOToEpoch(eventObj["startDate"].as<String>());
+        evt.endTime = parseISOToEpoch(eventObj["endDate"].as<String>());
+        evt.durationMin = duration;
+        evt.numRounds = rounds;
+
+        // Preserve triggered state from existing cache
+        evt.triggered = false;
+        for (const auto& existing : events) {
+            if (existing.id == evt.id) {
+                evt.triggered = existing.triggered;
+                break;
             }
         }
 
-        // Calculate duration
-        event.durationMinutes = calculateDuration(event.startDate, event.endDate);
-
-        // Apply category filter
-        if (categoryFilter.isEmpty() || matchesCategory(event.categoryName, categoryFilter)) {
-            events.push_back(event);
-            Serial.print("  - ");
-            Serial.print(event.name);
-            Serial.print(" (");
-            Serial.print(event.categoryName);
-            Serial.println(")");
-        }
+        newEvents.push_back(evt);
+        DEBUG_PRINTF("  Cached: %s (%s) %dmin %drounds\n",
+                     evt.name.c_str(), evt.id.c_str(), evt.durationMin, evt.numRounds);
     }
 
-    Serial.print("HelloClub: Filtered to ");
-    Serial.print(events.size());
-    Serial.println(" events");
+    events = newEvents;
+    lastSyncTime = millis();
+    saveToNVS();
 
+    DEBUG_PRINTF("HelloClub: Cached %d events with timer: tag\n", events.size());
     return true;
 }
 
-bool HelloClubClient::fetchAvailableCategories(int daysAhead, std::vector<String>& categories) {
-    categories.clear();
-
-    std::vector<HelloClubEvent> events;
-    if (!fetchEvents(daysAhead, "", events)) {
-        return false;
+void HelloClubClient::loadFromNVS() {
+    Preferences prefs;
+    if (!prefs.begin(NVS_NAMESPACE, true)) {
+        DEBUG_PRINTLN("HelloClub: No cached events in NVS");
+        return;
     }
 
-    // Extract unique categories
-    for (const auto& event : events) {
-        if (!event.categoryName.isEmpty()) {
-            // Check if category already in list
-            bool found = false;
-            for (const auto& cat : categories) {
-                if (cat.equalsIgnoreCase(event.categoryName)) {
-                    found = true;
-                    break;
-                }
-            }
-            if (!found) {
-                categories.push_back(event.categoryName);
-            }
+    String json = prefs.getString(NVS_EVENTS_KEY, "[]");
+    prefs.end();
+
+    DynamicJsonDocument doc(4096);
+    DeserializationError error = deserializeJson(doc, json);
+    if (error) {
+        DEBUG_PRINTF("HelloClub: Failed to parse NVS cache: %s\n", error.c_str());
+        return;
+    }
+
+    events.clear();
+    JsonArray arr = doc.as<JsonArray>();
+    for (JsonObject obj : arr) {
+        CachedEvent evt;
+        evt.id = obj["i"].as<String>();
+        evt.name = obj["n"].as<String>();
+        evt.startTime = obj["s"].as<time_t>();
+        evt.endTime = obj["e"].as<time_t>();
+        evt.durationMin = obj["d"].as<uint16_t>();
+        evt.numRounds = obj["r"].as<uint8_t>();
+        evt.triggered = obj["t"].as<bool>();
+        events.push_back(evt);
+    }
+
+    DEBUG_PRINTF("HelloClub: Loaded %d cached events from NVS\n", events.size());
+}
+
+void HelloClubClient::saveToNVS() {
+    DynamicJsonDocument doc(4096);
+    JsonArray arr = doc.to<JsonArray>();
+
+    for (const auto& evt : events) {
+        JsonObject obj = arr.createNestedObject();
+        obj["i"] = evt.id;
+        obj["n"] = evt.name;
+        obj["s"] = (long)evt.startTime;
+        obj["e"] = (long)evt.endTime;
+        obj["d"] = evt.durationMin;
+        obj["r"] = evt.numRounds;
+        obj["t"] = evt.triggered;
+    }
+
+    String json;
+    serializeJson(doc, json);
+
+    Preferences prefs;
+    if (prefs.begin(NVS_NAMESPACE, false)) {
+        prefs.putString(NVS_EVENTS_KEY, json);
+        prefs.end();
+        DEBUG_PRINTF("HelloClub: Saved %d events to NVS (%d bytes)\n", events.size(), json.length());
+    }
+}
+
+CachedEvent* HelloClubClient::checkAutoTrigger(Timezone& tz) {
+    time_t now = time(nullptr);
+
+    for (auto& evt : events) {
+        if (evt.triggered) continue;
+
+        // Check if now is within the trigger window (startTime to startTime + 2 min)
+        if (now >= evt.startTime && now <= evt.startTime + (HELLOCLUB_TRIGGER_WINDOW_MS / 1000)) {
+            return &evt;
         }
     }
 
-    // Sort categories alphabetically
-    std::sort(categories.begin(), categories.end(), [](const String& a, const String& b) {
-        return a.compareTo(b) < 0;
-    });
-
-    return true;
+    return nullptr;
 }
 
-bool HelloClubClient::parseISODate(const String& isoDate, int& dayOfWeek, int& hour, int& minute) {
-    // Expected format: 2025-10-30T18:00:00Z or 2025-10-30T18:00:00+00:00
-
-    if (isoDate.length() < 19) {
-        return false;
-    }
-
-    // Parse date components
-    int year = isoDate.substring(0, 4).toInt();
-    int month = isoDate.substring(5, 7).toInt();
-    int day = isoDate.substring(8, 10).toInt();
-    hour = isoDate.substring(11, 13).toInt();
-    minute = isoDate.substring(14, 16).toInt();
-
-    // Calculate day of week using Zeller's congruence
-    if (month < 3) {
-        month += 12;
-        year--;
-    }
-
-    int q = day;
-    int m = month;
-    int k = year % 100;
-    int j = year / 100;
-
-    int h = (q + ((13 * (m + 1)) / 5) + k + (k / 4) + (j / 4) - (2 * j)) % 7;
-
-    // Convert Zeller result to our format (0=Sunday, 6=Saturday)
-    // Zeller: 0=Saturday, 1=Sunday, 2=Monday, ..., 6=Friday
-    dayOfWeek = (h + 6) % 7;
-
-    return true;
-}
-
-int HelloClubClient::calculateDuration(const String& startDate, const String& endDate) {
-    // Simple duration calculation based on time difference
-    // Parse hours and minutes from both dates
-
-    if (startDate.length() < 19 || endDate.length() < 19) {
-        return 60; // Default to 60 minutes if parsing fails
-    }
-
-    int startHour = startDate.substring(11, 13).toInt();
-    int startMinute = startDate.substring(14, 16).toInt();
-    int endHour = endDate.substring(11, 13).toInt();
-    int endMinute = endDate.substring(14, 16).toInt();
-
-    int startTotalMinutes = startHour * 60 + startMinute;
-    int endTotalMinutes = endHour * 60 + endMinute;
-
-    int duration = endTotalMinutes - startTotalMinutes;
-
-    // Handle day boundary crossing
-    if (duration < 0) {
-        duration += 24 * 60; // Add 24 hours
-    }
-
-    // Sanity check
-    if (duration <= 0 || duration > 24 * 60) {
-        return 60; // Default to 60 minutes
-    }
-
-    return duration;
-}
-
-bool HelloClubClient::matchesCategory(const String& categoryName, const String& filterList) {
-    if (filterList.isEmpty()) {
-        return true; // No filter = match all
-    }
-
-    // Split filter list by comma
-    int startPos = 0;
-    while (startPos < filterList.length()) {
-        int commaPos = filterList.indexOf(',', startPos);
-        if (commaPos == -1) {
-            commaPos = filterList.length();
+void HelloClubClient::markTriggered(const String& id) {
+    for (auto& evt : events) {
+        if (evt.id == id) {
+            evt.triggered = true;
+            DEBUG_PRINTF("HelloClub: Marked event '%s' as triggered\n", evt.name.c_str());
+            saveToNVS();
+            return;
         }
-
-        String filter = filterList.substring(startPos, commaPos);
-        filter.trim();
-
-        if (categoryName.equalsIgnoreCase(filter)) {
-            return true;
-        }
-
-        startPos = commaPos + 1;
     }
-
-    return false;
 }
 
-bool HelloClubClient::convertEventToSchedule(const HelloClubEvent& event, const String& ownerUsername, Schedule& schedule, Timezone* localTz) {
-    // Parse ISO 8601 date string (format: 2025-10-30T18:00:00Z or 2025-10-30T18:00:00+00:00)
-    if (event.startDate.length() < 19) {
-        lastError = "Invalid date format (too short): " + event.startDate;
-        return false;
+void HelloClubClient::purgeExpired(Timezone& tz) {
+    time_t now = time(nullptr);
+    size_t before = events.size();
+
+    events.erase(
+        std::remove_if(events.begin(), events.end(),
+            [now](const CachedEvent& evt) { return evt.endTime < now; }),
+        events.end()
+    );
+
+    if (events.size() < before) {
+        DEBUG_PRINTF("HelloClub: Purged %d expired events\n", before - events.size());
+        saveToNVS();
     }
-
-    // Extract date/time components from ISO string
-    int year = event.startDate.substring(0, 4).toInt();
-    int month = event.startDate.substring(5, 7).toInt();
-    int day = event.startDate.substring(8, 10).toInt();
-    int hour = event.startDate.substring(11, 13).toInt();
-    int minute = event.startDate.substring(14, 16).toInt();
-    int second = event.startDate.substring(17, 19).toInt();
-
-    // If timezone provided, convert from UTC to local time
-    if (localTz != nullptr) {
-        // Create UTC timestamp
-        time_t utcTime = makeTime(hour, minute, second, day, month, year);
-
-        // Convert to local time using ezTime
-        // tzTime() handles the conversion without modifying global state
-        time_t localTime = localTz->tzTime(utcTime);
-
-        // Extract local time components
-        tmElements_t tm;
-        breakTime(localTime, tm);
-
-        schedule.dayOfWeek = tm.Wday - 1; // ezTime: 1=Sunday, convert to 0=Sunday
-        schedule.startHour = tm.Hour;
-        schedule.startMinute = tm.Minute;
-
-        Serial.printf("HelloClub: Converted %s UTC to local: Day=%d, %02d:%02d\n",
-                      event.startDate.c_str(), schedule.dayOfWeek, schedule.startHour, schedule.startMinute);
-    } else {
-        // No timezone conversion - use UTC time directly (fallback)
-        int dayOfWeek, utcHour, utcMinute;
-        if (!parseISODate(event.startDate, dayOfWeek, utcHour, utcMinute)) {
-            lastError = "Failed to parse event start date: " + event.startDate;
-            return false;
-        }
-
-        schedule.dayOfWeek = dayOfWeek;
-        schedule.startHour = utcHour;
-        schedule.startMinute = utcMinute;
-
-        Serial.println("Warning: No timezone provided for Hello Club conversion, using UTC times");
-    }
-
-    schedule.id = "hc-" + event.id.substring(0, 8); // Prefix with "hc-" for HelloClub
-    schedule.clubName = event.name;
-    schedule.ownerUsername = ownerUsername;
-    schedule.durationMinutes = event.durationMinutes;
-    schedule.enabled = true;
-    schedule.createdAt = millis();
-
-    return true;
 }

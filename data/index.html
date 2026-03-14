@@ -15,15 +15,7 @@
                     <div id="settings-icon" class="icon-button" title="Settings">
                         <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <circle cx="12" cy="12" r="3"></circle>
-                            <path d="M12 1v6m0 6v6m-6-6h6m6 0h-6"></path>
-                        </svg>
-                    </div>
-                    <div id="schedule-icon" class="icon-button operator-only" title="Schedules">
-                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect>
-                            <line x1="16" y1="2" x2="16" y2="6"></line>
-                            <line x1="8" y1="2" x2="8" y2="6"></line>
-                            <line x1="3" y1="10" x2="21" y2="10"></line>
+                            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
                         </svg>
                     </div>
                     <div id="user-icon" class="icon-button" title="Login / User Management">
@@ -32,19 +24,28 @@
                             <circle cx="12" cy="7" r="4"></circle>
                         </svg>
                     </div>
-                    <div id="helloclub-icon" class="icon-button admin-only" title="Hello Club Integration">
+                    <div id="qr-icon" class="icon-button" title="QR Codes">
                         <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
-                            <circle cx="9" cy="7" r="4"></circle>
-                            <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
-                            <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
+                            <rect x="2" y="2" width="8" height="8" rx="1"></rect>
+                            <rect x="14" y="2" width="8" height="8" rx="1"></rect>
+                            <rect x="2" y="14" width="8" height="8" rx="1"></rect>
+                            <rect x="14" y="14" width="4" height="4"></rect>
+                            <line x1="22" y1="14" x2="22" y2="18"></line>
+                            <line x1="18" y1="22" x2="22" y2="22"></line>
+                        </svg>
+                    </div>
+                    <div id="help-icon" class="icon-button" title="Help">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <circle cx="12" cy="12" r="10"></circle>
+                            <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path>
+                            <line x1="12" y1="17" x2="12.01" y2="17"></line>
                         </svg>
                     </div>
                 </div>
                 <div class="header-title">
                     <h1>Badminton Timer</h1>
                     <div class="connection-badge">
-                        <span id="connection-status" class="status-disconnected" title="Disconnected">●</span>
+                        <span id="connection-status" class="status-disconnected" title="Disconnected">&#9679;</span>
                         <span class="connection-text">Connecting...</span>
                     </div>
                 </div>
@@ -54,7 +55,7 @@
                         <polyline points="12 6 12 12 16 14"></polyline>
                     </svg>
                     <span id="time">--:--:--</span>
-                    <span id="ntp-status" class="ntp-status ntp-syncing" title="Syncing with time server...">⏳</span>
+                    <span id="ntp-status" class="ntp-status ntp-syncing" title="Syncing with time server...">&#9203;</span>
                 </div>
             </header>
 
@@ -71,11 +72,15 @@
                     </div>
                 </div>
 
-                <div class="break-timer-card">
-                    <div class="timer-label">Break Timer</div>
-                    <div class="break-timer">
-                        <div id="break-timer-display">00:00</div>
-                    </div>
+                <!-- Event window info (shown when an HC event is active) -->
+                <div id="event-window-info" class="event-window-info hidden">
+                    <span id="event-name-display"></span>
+                    <span id="event-end-display"></span>
+                </div>
+
+                <!-- Pause after next banner -->
+                <div id="pause-after-next-banner" class="pause-banner hidden">
+                    Will pause after this round
                 </div>
             </div>
 
@@ -93,6 +98,14 @@
                         <rect x="14" y="4" width="4" height="16"></rect>
                     </svg>
                     <span>Pause</span>
+                </button>
+                <button id="pause-after-next-btn" class="btn btn-outline-warning hidden">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <rect x="6" y="4" width="4" height="16"></rect>
+                        <rect x="14" y="4" width="4" height="16"></rect>
+                        <path d="M12 22l4-4H8l4 4z"></path>
+                    </svg>
+                    <span>Pause Next</span>
                 </button>
                 <button id="reset-btn" class="btn btn-danger">
                     <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
@@ -114,7 +127,7 @@
                             Game Duration
                         </label>
                         <div class="input-group">
-                            <input type="number" id="game-duration" value="21" min="1" max="120">
+                            <input type="number" id="game-duration" value="12" min="1" max="120">
                             <span class="unit">min</span>
                         </div>
                     </div>
@@ -132,6 +145,25 @@
                     </div>
                 </div>
             </div>
+
+            <!-- Upcoming Events Card -->
+            <div class="upcoming-events-section">
+                <div class="settings-card">
+                    <div class="upcoming-events-header">
+                        <h3>Upcoming Events</h3>
+                        <button id="sync-now-btn" class="btn btn-small btn-secondary admin-only" title="Sync Now">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <polyline points="23 4 23 10 17 10"></polyline>
+                                <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
+                            </svg>
+                        </button>
+                    </div>
+                    <div id="upcoming-events-list" class="upcoming-events-list">
+                        <p class="text-secondary">No upcoming events</p>
+                    </div>
+                    <div id="last-sync-info" class="last-sync-info text-secondary"></div>
+                </div>
+            </div>
         </div>
 
         <!-- Settings Page -->
@@ -140,40 +172,28 @@
                 <div class="header-title">
                     <h1>Advanced Settings</h1>
                 </div>
+                <button class="page-close-btn" onclick="showSettingsPage(false)">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="18" y1="6" x2="6" y2="18"></line>
+                        <line x1="6" y1="6" x2="18" y2="18"></line>
+                    </svg>
+                </button>
             </header>
 
             <div class="settings-container">
-                <div class="settings-card">
-                    <h3>Timer Settings</h3>
-                    <div class="setting-item">
-                        <label for="break-time">Break Time</label>
-                        <div class="input-group">
-                            <input type="number" id="break-time" value="60" min="1" max="3600">
-                            <span class="unit">sec</span>
-                        </div>
-                    </div>
-                    <div class="setting-item">
-                        <label for="break-timer-enable">Enable Break Timer</label>
-                        <label class="switch">
-                            <input type="checkbox" id="break-timer-enable" checked>
-                            <span class="slider"></span>
-                        </label>
-                    </div>
-                </div>
-
                 <div class="settings-card">
                     <h3>Siren Settings</h3>
                     <div class="setting-item">
                         <label for="siren-length">Blast Length</label>
                         <div class="input-group">
-                            <input type="number" id="siren-length" value="1000" min="100" max="10000">
+                            <input type="number" id="siren-length" value="1000" min="100" max="10000" step="100">
                             <span class="unit">ms</span>
                         </div>
                     </div>
                     <div class="setting-item">
                         <label for="siren-pause">Blast Pause</label>
                         <div class="input-group">
-                            <input type="number" id="siren-pause" value="1000" min="100" max="10000">
+                            <input type="number" id="siren-pause" value="1000" min="100" max="10000" step="100">
                             <span class="unit">ms</span>
                         </div>
                     </div>
@@ -205,8 +225,66 @@
                             <option value="America/Toronto">Canada - Toronto</option>
                             <option value="America/Vancouver">Canada - Vancouver</option>
                         </select>
-                        <small class="setting-hint">⚠️ Admin only - Changes apply immediately</small>
+                        <small class="setting-hint">Admin only - Changes apply immediately</small>
                     </div>
+                </div>
+
+                <div class="settings-card admin-only">
+                    <h3>Hello Club API</h3>
+                    <p class="text-secondary">Events with <code>timer:</code> in their description will auto-trigger the timer. Rounds repeat until the booking ends.</p>
+                    <div class="setting-item" style="margin-top:12px;">
+                        <label for="hc-enabled">Enable Auto-trigger</label>
+                        <label class="switch">
+                            <input type="checkbox" id="hc-enabled">
+                            <span class="slider"></span>
+                        </label>
+                    </div>
+                    <div class="setting-item">
+                        <label for="hc-default-duration">Default Round Duration</label>
+                        <div class="input-group">
+                            <input type="number" id="hc-default-duration" value="12" min="1" max="120">
+                            <span class="unit">min</span>
+                        </div>
+                    </div>
+                    <div class="setting-item">
+                        <label for="hc-api-key">API Key</label>
+                        <input type="password" id="hc-api-key" placeholder="Paste API key here" class="full-width-input">
+                    </div>
+                    <div id="hc-api-status" class="text-secondary" style="font-size:0.85em;margin-bottom:12px;"></div>
+                    <button id="save-hc-settings-btn" class="btn btn-primary btn-large">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polyline points="20 6 9 17 4 12"></polyline>
+                        </svg>
+                        <span>Save HC Settings</span>
+                    </button>
+                </div>
+
+                <div class="settings-card admin-only">
+                    <h3>QR Code Settings</h3>
+                    <p class="text-secondary">WiFi credentials shown on the QR page so staff can join the timer network.</p>
+                    <div class="setting-item" style="flex-direction:column;align-items:flex-start;gap:6px;">
+                        <label for="qr-wifi-ssid">Network SSID</label>
+                        <input type="text" id="qr-wifi-ssid" placeholder="Leave blank to use connected network" class="full-width-input">
+                        <small id="qr-connected-ssid-hint" class="setting-hint"></small>
+                    </div>
+                    <div class="setting-item" style="flex-direction:column;align-items:flex-start;gap:6px;">
+                        <label for="qr-wifi-password">WiFi Password</label>
+                        <input type="password" id="qr-wifi-password" placeholder="Network password" class="full-width-input">
+                    </div>
+                    <div class="setting-item">
+                        <label for="qr-wifi-encryption">Encryption</label>
+                        <select id="qr-wifi-encryption" class="full-width-input">
+                            <option value="WPA">WPA/WPA2</option>
+                            <option value="WEP">WEP</option>
+                            <option value="nopass">Open (No Password)</option>
+                        </select>
+                    </div>
+                    <button id="save-qr-settings-btn" class="btn btn-primary btn-large">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polyline points="20 6 9 17 4 12"></polyline>
+                        </svg>
+                        <span>Save QR Settings</span>
+                    </button>
                 </div>
             </div>
 
@@ -219,6 +297,7 @@
                 </button>
             </div>
         </div>
+
         <!-- Login Modal -->
         <div id="login-modal" class="modal hidden">
             <div class="modal-content">
@@ -256,6 +335,12 @@
                 <div class="header-title">
                     <h1>User Management</h1>
                 </div>
+                <button class="page-close-btn" onclick="showUserManagementPage(false)">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="18" y1="6" x2="6" y2="18"></line>
+                        <line x1="6" y1="6" x2="18" y2="18"></line>
+                    </svg>
+                </button>
             </header>
 
             <div class="settings-container">
@@ -316,289 +401,126 @@
             </div>
         </div>
 
-        <!-- Schedule Management Page (Operator+) -->
-        <div id="schedule-page" class="hidden">
+        <!-- Help Page -->
+        <div id="help-page" class="hidden">
             <header class="header">
                 <div class="header-title">
-                    <h1>Schedule Management</h1>
+                    <h1>Help</h1>
                 </div>
+                <button class="page-close-btn" onclick="showHelpPage(false)">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="18" y1="6" x2="6" y2="18"></line>
+                        <line x1="6" y1="6" x2="18" y2="18"></line>
+                    </svg>
+                </button>
             </header>
 
-            <div class="schedule-container">
-                <!-- Scheduling System Toggle -->
-                <div class="schedule-header">
-                    <div class="schedule-toggle-card">
-                        <div class="toggle-info">
-                            <h3>Automatic Scheduling</h3>
-                            <p class="text-secondary">Enable automatic timer control based on schedules</p>
-                        </div>
-                        <label class="switch">
-                            <input type="checkbox" id="scheduling-enabled-toggle">
-                            <span class="slider"></span>
-                        </label>
-                    </div>
-                </div>
-
-                <!-- Club Filter -->
+            <div class="settings-container help-content">
                 <div class="settings-card">
-                    <div class="setting-item">
-                        <label for="schedule-club-filter">
-                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
-                                <circle cx="9" cy="7" r="4"></circle>
-                                <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
-                                <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
-                            </svg>
-                            Filter by Club
-                        </label>
-                        <input type="text" id="schedule-club-filter" placeholder="Enter club name" class="full-width-input">
-                    </div>
-                    <button id="load-schedules-btn" class="btn btn-primary btn-large">
-                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <polyline points="23 4 23 10 17 10"></polyline>
-                            <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
-                        </svg>
-                        <span>Load Schedules</span>
-                    </button>
+                    <h3>Timer Controls</h3>
+                    <p><strong>Start</strong> begins the game timer. <strong>Pause</strong> freezes the countdown mid-round. <strong>Reset</strong> stops the timer and returns to round 1.</p>
+                    <p>The timer counts down each round, sounding the siren when a round ends. After a short pause it automatically starts the next round.</p>
+                    <p><strong>Pause Next</strong> (operator/admin only) queues a pause between the current round and the next. Tap again to cancel. Useful for speeches or breaks without interrupting the current round.</p>
+                    <p>Game duration (1–120 min) and number of rounds (1–20) can be changed from the main page while the timer is idle.</p>
+                    <p>Siren blast length and pause between blasts can be adjusted in Advanced Settings (100–10,000 ms).</p>
                 </div>
 
-                <!-- Weekly Calendar -->
-                <div class="weekly-calendar">
-                    <h3>Weekly Schedule Calendar</h3>
-                    <div class="calendar-grid">
-                        <div class="calendar-header">
-                            <div class="time-column">Time</div>
-                            <div class="day-column">Sun</div>
-                            <div class="day-column">Mon</div>
-                            <div class="day-column">Tue</div>
-                            <div class="day-column">Wed</div>
-                            <div class="day-column">Thu</div>
-                            <div class="day-column">Fri</div>
-                            <div class="day-column">Sat</div>
-                        </div>
-                        <div id="calendar-body" class="calendar-body">
-                            <!-- Calendar hours will be generated by JavaScript -->
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Add/Edit Schedule Form -->
                 <div class="settings-card">
-                    <h3 id="schedule-form-title">Add New Schedule</h3>
-                    <input type="hidden" id="edit-schedule-id">
-
-                    <div class="setting-item">
-                        <label for="schedule-club-name">Club Name</label>
-                        <input type="text" id="schedule-club-name" placeholder="e.g., Monday Night Players" class="full-width-input">
-                    </div>
-
-                    <div class="setting-item">
-                        <label for="schedule-day">Day of Week</label>
-                        <select id="schedule-day" class="full-width-input">
-                            <option value="0">Sunday</option>
-                            <option value="1">Monday</option>
-                            <option value="2">Tuesday</option>
-                            <option value="3">Wednesday</option>
-                            <option value="4">Thursday</option>
-                            <option value="5">Friday</option>
-                            <option value="6">Saturday</option>
-                        </select>
-                    </div>
-
-                    <div class="setting-item">
-                        <label for="schedule-time">Start Time</label>
-                        <div class="time-input-group">
-                            <input type="number" id="schedule-hour" min="0" max="23" placeholder="HH" class="time-input">
-                            <span class="time-separator">:</span>
-                            <input type="number" id="schedule-minute" min="0" max="59" placeholder="MM" class="time-input">
-                        </div>
-                    </div>
-
-                    <div class="setting-item">
-                        <label for="schedule-duration">Duration (minutes)</label>
-                        <input type="number" id="schedule-duration" min="1" max="180" value="60" class="full-width-input">
-                    </div>
-
-                    <div class="setting-item">
-                        <label for="schedule-enabled">Enabled</label>
-                        <label class="switch">
-                            <input type="checkbox" id="schedule-enabled" checked>
-                            <span class="slider"></span>
-                        </label>
-                    </div>
-
-                    <div class="schedule-form-buttons">
-                        <button id="save-schedule-btn" class="btn btn-success btn-large">
-                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <polyline points="20 6 9 17 4 12"></polyline>
-                            </svg>
-                            <span>Save Schedule</span>
-                        </button>
-                        <button id="cancel-schedule-btn" class="btn btn-secondary btn-large">
-                            <span>Cancel</span>
-                        </button>
-                    </div>
+                    <h3>Upcoming Events</h3>
+                    <p>Shows the next 7 days of Hello Club bookings that have the <code>timer:</code> tag in their description.</p>
+                    <p>Events auto-trigger the timer at their start time with the configured duration and rounds.</p>
+                    <p>Greyed-out events have already been triggered. The timer won't fire the same event twice.</p>
+                    <p>Events sync automatically every hour. Admins can force a sync with the refresh button.</p>
                 </div>
 
-                <!-- Schedules List -->
+                <div class="settings-card admin-only">
+                    <h3>Hello Club Setup</h3>
+                    <p>Add <code>timer:</code> to any Hello Club event description to have it auto-trigger the court timer. The siren sounds at the end of each round. By default, rounds repeat until the booking ends. Examples:</p>
+                    <ul class="help-list">
+                        <li><code>timer:</code> &mdash; uses default round duration (set in Settings), continuous</li>
+                        <li><code>timer: 15min</code> &mdash; 15-minute rounds, continuous</li>
+                        <li><code>timer: 15min 3rounds</code> &mdash; 15-minute rounds, stops after 3</li>
+                        <li><code>timer: 10min 5rounds</code> &mdash; 10-minute rounds, stops after 5</li>
+                    </ul>
+                    <p>The tag can appear anywhere in the description. Only events within the next 7 days are fetched.</p>
+                    <p>Configure the API key and enable auto-trigger in <strong>Settings &gt; Hello Club API</strong>.</p>
+                </div>
+
                 <div class="settings-card">
-                    <h3>Current Schedules</h3>
-                    <div id="schedules-list" class="schedules-list">
-                        <p class="text-secondary">Loading schedules...</p>
-                    </div>
+                    <h3>QR Codes</h3>
+                    <p>The QR page shows two codes side-by-side for easy scanning:</p>
+                    <ul class="help-list">
+                        <li><strong>WiFi QR</strong> &mdash; connects the scanner's phone to the timer network</li>
+                        <li><strong>App QR</strong> &mdash; opens the timer web interface in a browser</li>
+                    </ul>
+                    <p>Display the QR page on a tablet near the court so players can join without asking for the WiFi password.</p>
+                </div>
+
+                <div class="settings-card admin-only">
+                    <h3>QR Settings</h3>
+                    <p>Configure the WiFi network name (SSID), password, and encryption type shown in the WiFi QR code.</p>
+                    <p>If the SSID is left blank, the timer uses the network it's currently connected to.</p>
+                </div>
+
+                <div class="settings-card admin-only">
+                    <h3>Users &amp; Roles</h3>
+                    <ul class="help-list">
+                        <li><strong>Viewer</strong> &mdash; can see the timer and events but cannot control anything</li>
+                        <li><strong>Operator</strong> &mdash; can start, stop, pause, and reset the timer</li>
+                        <li><strong>Admin</strong> &mdash; full access including user management, Hello Club settings, and system configuration</li>
+                    </ul>
+                    <p>Manage operators and change passwords from the user icon in the header (admin only).</p>
+                </div>
+
+                <div class="settings-card">
+                    <h3>Connectivity</h3>
+                    <ul class="help-list">
+                        <li><strong style="color:var(--success-color)">&#9679; Green dot</strong> &mdash; connected to the timer</li>
+                        <li><strong style="color:var(--danger-color)">&#9679; Red dot</strong> &mdash; disconnected, auto-reconnecting</li>
+                    </ul>
+                    <p>The timer auto-reconnects if the connection drops. If it fails after several attempts, refresh the page.</p>
+                    <p>The clock icon shows <strong style="color:var(--success-color)">&#10003;</strong> when time is synced via NTP, or <strong style="color:var(--danger-color)">&#10007;</strong> if sync failed.</p>
                 </div>
             </div>
 
             <div class="settings-controls">
-                <button id="close-schedule-btn" class="btn btn-primary btn-large">
+                <button id="close-help-btn" class="btn btn-primary btn-large">
                     <span>Close</span>
                 </button>
             </div>
         </div>
 
-        <!-- Hello Club Integration Page (Admin Only) -->
-        <div id="helloclub-page" class="hidden">
+        <!-- QR Code Overlay Page -->
+        <div id="qr-page" class="qr-overlay hidden">
             <header class="header">
                 <div class="header-title">
-                    <h1>Hello Club Integration</h1>
+                    <h1>QR Codes</h1>
                 </div>
-            </header>
-
-            <div class="settings-container">
-                <div class="settings-card">
-                    <h3>Configuration</h3>
-                    <div class="setting-item">
-                        <label for="helloclub-enabled">Enable Hello Club Sync</label>
-                        <label class="switch">
-                            <input type="checkbox" id="helloclub-enabled">
-                            <span class="slider"></span>
-                        </label>
-                    </div>
-                    <div class="setting-item">
-                        <label for="helloclub-api-key">API Key</label>
-                        <input type="password" id="helloclub-api-key" placeholder="Enter Hello Club API key" class="full-width-input">
-                    </div>
-                    <div class="setting-item">
-                        <label for="helloclub-days-ahead">Days to Look Ahead</label>
-                        <div class="input-group">
-                            <input type="number" id="helloclub-days-ahead" value="7" min="1" max="30">
-                            <span class="unit">days</span>
-                        </div>
-                    </div>
-                    <div class="setting-item">
-                        <label for="helloclub-sync-hour">Daily Sync Time</label>
-                        <select id="helloclub-sync-hour" class="full-width-input">
-                            <option value="0">12:00 AM (Midnight)</option>
-                            <option value="1">1:00 AM</option>
-                            <option value="2">2:00 AM</option>
-                            <option value="3">3:00 AM</option>
-                            <option value="4">4:00 AM</option>
-                            <option value="5">5:00 AM</option>
-                            <option value="6">6:00 AM</option>
-                            <option value="7">7:00 AM</option>
-                            <option value="8">8:00 AM</option>
-                            <option value="9">9:00 AM</option>
-                            <option value="10">10:00 AM</option>
-                            <option value="11">11:00 AM</option>
-                            <option value="12">12:00 PM (Noon)</option>
-                            <option value="13">1:00 PM</option>
-                            <option value="14">2:00 PM</option>
-                            <option value="15">3:00 PM</option>
-                            <option value="16">4:00 PM</option>
-                            <option value="17">5:00 PM</option>
-                            <option value="18">6:00 PM</option>
-                            <option value="19">7:00 PM</option>
-                            <option value="20">8:00 PM</option>
-                            <option value="21">9:00 PM</option>
-                            <option value="22">10:00 PM</option>
-                            <option value="23">11:00 PM</option>
-                        </select>
-                    </div>
-                    <button id="save-helloclub-settings-btn" class="btn btn-primary btn-large">
-                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <polyline points="20 6 9 17 4 12"></polyline>
-                        </svg>
-                        <span>Save Settings</span>
-                    </button>
-                </div>
-
-                <div class="settings-card">
-                    <h3>Category Filter</h3>
-                    <p class="text-secondary">Select which event categories to import automatically</p>
-                    <div class="setting-item">
-                        <button id="fetch-categories-btn" class="btn btn-secondary btn-large">
-                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <polyline points="23 4 23 10 17 10"></polyline>
-                                <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
-                            </svg>
-                            <span>Fetch Categories</span>
-                        </button>
-                    </div>
-                    <div id="helloclub-categories-list" class="categories-list">
-                        <p class="text-secondary">Click "Fetch Categories" to load available categories</p>
-                    </div>
-                </div>
-
-                <div class="settings-card">
-                    <h3>Import Events</h3>
-                    <p class="text-secondary">Manually import events from Hello Club</p>
-                    <button id="preview-events-btn" class="btn btn-success btn-large">
-                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
-                            <circle cx="12" cy="12" r="3"></circle>
-                        </svg>
-                        <span>Preview & Import Events</span>
-                    </button>
-                    <button id="sync-now-btn" class="btn btn-warning btn-large">
-                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <polyline points="23 4 23 10 17 10"></polyline>
-                            <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
-                        </svg>
-                        <span>Sync Now (Auto-import)</span>
-                    </button>
-                </div>
-
-                <div class="settings-card" id="last-sync-card">
-                    <h3>Sync Status</h3>
-                    <div class="sync-status-info">
-                        <p id="last-sync-text" class="text-secondary">Never synced</p>
-                    </div>
-                </div>
-            </div>
-
-            <div class="settings-controls">
-                <button id="close-helloclub-btn" class="btn btn-primary btn-large">
-                    <span>Close</span>
+                <button id="qr-close-btn" class="page-close-btn">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="18" y1="6" x2="6" y2="18"></line>
+                        <line x1="6" y1="6" x2="18" y2="18"></line>
+                    </svg>
                 </button>
-            </div>
-        </div>
-
-        <!-- Hello Club Events Import Modal -->
-        <div id="helloclub-import-modal" class="modal hidden">
-            <div class="modal-content modal-large">
-                <h2>Import Hello Club Events</h2>
-                <p class="modal-subtitle">Select events to import as schedules</p>
-
-                <div id="helloclub-events-container" class="events-container">
-                    <p class="text-secondary">Loading events...</p>
+            </header>
+            <div class="qr-container">
+                <div class="qr-card">
+                    <h3>Connect to Timer Network</h3>
+                    <div id="qr-wifi-canvas" class="qr-canvas"></div>
+                    <p class="qr-label">Scan to connect to WiFi</p>
+                    <p id="qr-wifi-label" class="qr-detail"></p>
                 </div>
-
-                <div class="modal-buttons">
-                    <button id="import-selected-btn" class="btn btn-success btn-large">
-                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <polyline points="20 6 9 17 4 12"></polyline>
-                        </svg>
-                        <span>Import Selected</span>
-                    </button>
-                    <button id="cancel-import-btn" class="btn btn-secondary btn-large">
-                        <span>Cancel</span>
-                    </button>
+                <div class="qr-card">
+                    <h3>Open Timer</h3>
+                    <div id="qr-app-canvas" class="qr-canvas"></div>
+                    <p class="qr-label">Scan to open timer</p>
+                    <p id="qr-app-url" class="qr-detail"></p>
                 </div>
             </div>
         </div>
 
     </div>
-    <script src="script.js?v=20251030"></script>
+    <script src="qrcode.min.js"></script>
+    <script src="script.js?v=32"></script>
 </body>
 </html>
-

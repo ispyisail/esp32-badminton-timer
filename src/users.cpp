@@ -1,4 +1,5 @@
 #include "users.h"
+#include "config.h"
 #include "mbedtls/sha256.h"
 
 // NVS keys
@@ -283,27 +284,9 @@ String UserManager::hashPassword(const String& password) {
 
     mbedtls_sha256_init(&ctx);
 
-    // Error handling: Check if initialization succeeds
-    int ret = mbedtls_sha256_starts(&ctx, 0); // 0 = SHA-256 (not SHA-224)
-    if (ret != 0) {
-        Serial.printf("SHA-256 start failed with error: %d\n", ret);
-        mbedtls_sha256_free(&ctx);
-        return ""; // Return empty string on error
-    }
-
-    ret = mbedtls_sha256_update(&ctx, (unsigned char*)password.c_str(), password.length());
-    if (ret != 0) {
-        Serial.printf("SHA-256 update failed with error: %d\n", ret);
-        mbedtls_sha256_free(&ctx);
-        return "";
-    }
-
-    ret = mbedtls_sha256_finish(&ctx, hash);
-    if (ret != 0) {
-        Serial.printf("SHA-256 finish failed with error: %d\n", ret);
-        mbedtls_sha256_free(&ctx);
-        return "";
-    }
+    mbedtls_sha256_starts(&ctx, 0); // 0 = SHA-256 (not SHA-224)
+    mbedtls_sha256_update(&ctx, (unsigned char*)password.c_str(), password.length());
+    mbedtls_sha256_finish(&ctx, hash);
 
     mbedtls_sha256_free(&ctx);
 

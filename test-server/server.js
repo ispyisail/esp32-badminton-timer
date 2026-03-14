@@ -1,16 +1,33 @@
 const express = require('express');
 const WebSocket = require('ws');
 const path = require('path');
+const https = require('https');
+const os = require('os');
 
 const app = express();
 const PORT = 8080;
+
+// Get LAN IP address
+function getLanIp() {
+    const interfaces = os.networkInterfaces();
+    for (const name of Object.keys(interfaces)) {
+        for (const iface of interfaces[name]) {
+            if (iface.family === 'IPv4' && !iface.internal) {
+                return iface.address;
+            }
+        }
+    }
+    return 'localhost';
+}
+const lanIp = getLanIp();
 
 // Serve static files from data directory
 app.use(express.static(path.join(__dirname, '../data')));
 
 const server = app.listen(PORT, () => {
-    console.log(`\n🚀 Mock ESP32 Server running!`);
-    console.log(`📱 Open your browser to: http://localhost:${PORT}`);
+    console.log(`\n🚀 Test Server running!`);
+    console.log(`📱 Local:   http://localhost:${PORT}`);
+    console.log(`📱 Network: http://${lanIp}:${PORT}`);
     console.log(`\n✨ Test credentials:`);
     console.log(`   Admin: username="admin", password="admin"`);
     console.log(`   Operator: username="operator1", password="pass123"`);
@@ -20,219 +37,289 @@ const server = app.listen(PORT, () => {
 // WebSocket server
 const wss = new WebSocket.Server({ server });
 
-// Mock data storage
-let timerStatus = 'IDLE'; // 'IDLE', 'RUNNING', 'PAUSED', 'FINISHED'
+// --- State ---
+let timerStatus = 'IDLE';
 let mainTimerRemaining = 0;
-let breakTimerRemaining = 0;
 let currentRound = 1;
-let schedulingEnabled = false;
+let pauseAfterNext = false;
+let continuousMode = false;
+let activeEventEndTime = 0;
+let activeEventName = '';
 
-// Settings storage
 let settings = {
-    gameDuration: 21 * 60 * 1000, // 21 minutes in milliseconds
-    breakDuration: 60 * 1000, // 60 seconds in milliseconds
+    gameDuration: 12 * 60 * 1000,
     numRounds: 3,
-    breakTimerEnabled: true,
     sirenLength: 1000,
     sirenPause: 1000
 };
-let schedules = [
-    {
-        id: "mock-1",
-        clubName: "Test Club A",
-        ownerUsername: "operator1",
-        dayOfWeek: 1, // Monday
-        startHour: 18,
-        startMinute: 0,
-        durationMinutes: 90,
-        enabled: true,
-        createdAt: Date.now()
-    },
-    {
-        id: "mock-2",
-        clubName: "Test Club B",
-        ownerUsername: "operator1",
-        dayOfWeek: 3, // Wednesday
-        startHour: 19,
-        startMinute: 30,
-        durationMinutes: 60,
-        enabled: true,
-        createdAt: Date.now()
-    }
-];
 
 let operators = [
     { username: "operator1", password: "pass123" },
     { username: "operator2", password: "test456" }
 ];
 
-// System timezone
 let currentTimezone = 'Pacific/Auckland';
 
-// Hello Club mock data
-let helloClubSettings = {
-    apiKey: '***configured***',
-    enabled: false,
-    daysAhead: 7,
-    categoryFilter: '',
-    syncHour: 0,
-    lastSyncDay: -1
+// Hello Club config
+let hcApiKey = '';       // Actual API key (stored in memory for testing)
+let hcEnabled = false;
+let hcDefaultDuration = 12;
+
+// QR config
+let qrConfig = {
+    ssidOverride: '',
+    connectedSsid: 'Gargoyle',
+    password: '',
+    encryption: 'WPA'
 };
 
-const mockHelloClubCategories = [
-    'Badminton',
-    'Tennis',
-    'Pickleball',
-    'Squash',
-    'Table Tennis'
-];
+// Cached events (populated from real API or mock fallback)
+let cachedEvents = [];
+let lastHCSync = 0;
 
-const mockHelloClubEvents = [
-    {
-        id: 'hc-event-1',
-        name: 'Badminton Evening Session',
-        startDate: getNextWeekday(1, 18, 0), // Next Monday 6 PM
-        endDate: getNextWeekday(1, 19, 30), // 90 minutes
-        activityName: 'Badminton',
-        categoryName: 'Badminton',
-        durationMinutes: 90
-    },
-    {
-        id: 'hc-event-2',
-        name: 'Competitive Badminton',
-        startDate: getNextWeekday(3, 19, 0), // Next Wednesday 7 PM
-        endDate: getNextWeekday(3, 20, 0), // 60 minutes
-        activityName: 'Badminton',
-        categoryName: 'Badminton',
-        durationMinutes: 60
-    },
-    {
-        id: 'hc-event-3',
-        name: 'Casual Badminton',
-        startDate: getNextWeekday(5, 18, 30), // Next Friday 6:30 PM
-        endDate: getNextWeekday(5, 20, 0), // 90 minutes
-        activityName: 'Badminton',
-        categoryName: 'Badminton',
-        durationMinutes: 90
-    },
-    {
-        id: 'hc-event-4',
-        name: 'Tennis Training',
-        startDate: getNextWeekday(2, 17, 0), // Next Tuesday 5 PM
-        endDate: getNextWeekday(2, 18, 30), // 90 minutes
-        activityName: 'Tennis',
-        categoryName: 'Tennis',
-        durationMinutes: 90
+// ==========================================================================
+// Hello Club API — Real HTTP client
+// ==========================================================================
+
+const HC_BASE_URL = 'https://api.helloclub.com';
+const HC_DAYS_AHEAD = 7;
+const HC_TRIGGER_WINDOW_SEC = 120;
+
+function parseTimerTag(description) {
+    if (!description) return null;
+    const lower = description.toLowerCase();
+    const tagPos = lower.indexOf('timer:');
+    if (tagPos === -1) return null;
+
+    let value = description.substring(tagPos + 6).trim();
+    const nlPos = value.indexOf('\n');
+    if (nlPos > 0) value = value.substring(0, nlPos);
+    value = value.trim();
+    const lowerValue = value.toLowerCase();
+
+    let duration = hcDefaultDuration;
+    let rounds = 0; // 0 = continuous
+
+    if (lowerValue.startsWith('enabled') || value === '') {
+        return { duration, rounds };
     }
-];
 
-// Helper function to get next weekday at specific time
-function getNextWeekday(targetDay, hour, minute) {
-    const now = new Date();
-    const result = new Date(now);
-    const currentDay = now.getDay();
-    let daysToAdd = targetDay - currentDay;
-    if (daysToAdd <= 0) daysToAdd += 7;
-    result.setDate(now.getDate() + daysToAdd);
-    result.setHours(hour, minute, 0, 0);
-    return result.toISOString();
+    // Parse Xmin
+    const minMatch = lowerValue.match(/(\d+)\s*min/);
+    if (minMatch) {
+        const val = parseInt(minMatch[1]);
+        if (val >= 1 && val <= 120) duration = val;
+    }
+
+    // Parse Xrounds (optional)
+    const roundMatch = lowerValue.match(/(\d+)\s*round/);
+    if (roundMatch) {
+        const val = parseInt(roundMatch[1]);
+        if (val >= 1 && val <= 20) rounds = val;
+    }
+
+    return { duration, rounds };
 }
 
-// Client tracking
+function hcApiFetch(endpoint, params) {
+    return new Promise((resolve, reject) => {
+        if (!hcApiKey) {
+            reject(new Error('API key not configured'));
+            return;
+        }
+
+        let url = `${HC_BASE_URL}${endpoint}`;
+        if (params) url += '?' + params;
+
+        const urlObj = new URL(url);
+        const options = {
+            hostname: urlObj.hostname,
+            path: urlObj.pathname + urlObj.search,
+            method: 'GET',
+            headers: {
+                'X-Api-Key': hcApiKey,
+                'Content-Type': 'application/json',
+                'Accept': 'application/json'
+            }
+        };
+
+        const req = https.request(options, (res) => {
+            let data = '';
+            res.on('data', chunk => data += chunk);
+            res.on('end', () => {
+                if (res.statusCode === 200) {
+                    try {
+                        resolve(JSON.parse(data));
+                    } catch (e) {
+                        reject(new Error(`JSON parse error: ${e.message}`));
+                    }
+                } else if (res.statusCode === 401) {
+                    reject(new Error('Invalid API key (401)'));
+                } else {
+                    reject(new Error(`HTTP ${res.statusCode}`));
+                }
+            });
+        });
+
+        req.on('error', (e) => reject(new Error(`Request failed: ${e.message}`)));
+        req.setTimeout(10000, () => { req.destroy(); reject(new Error('Request timeout')); });
+        req.end();
+    });
+}
+
+async function fetchAndCacheEvents() {
+    if (!hcApiKey) {
+        console.log('📅 No API key — skipping real fetch');
+        return false;
+    }
+
+    try {
+        const now = new Date();
+        const future = new Date(now.getTime() + HC_DAYS_AHEAD * 24 * 60 * 60 * 1000);
+        const fromDate = now.toISOString();
+        const toDate = future.toISOString();
+
+        const params = `fromDate=${fromDate}&toDate=${toDate}&sort=startDate&limit=50`;
+        console.log(`🌐 Fetching Hello Club events...`);
+
+        const response = await hcApiFetch('/event', params);
+        const events = response.events || response;
+
+        if (!Array.isArray(events)) {
+            console.log('⚠️  Unexpected API response format');
+            return false;
+        }
+
+        console.log(`🌐 API returned ${events.length} events`);
+
+        // Build new event list, preserving triggered state
+        const oldTriggered = new Map(cachedEvents.map(e => [e.id, e.triggered]));
+        const newEvents = [];
+
+        for (const event of events) {
+            const description = event.description || '';
+            const parsed = parseTimerTag(description);
+            if (!parsed) continue; // Skip events without timer: tag
+
+            const id = (event.id || '').substring(0, 12);
+            const name = (event.name || 'Unnamed').substring(0, 40);
+            const startTime = Math.floor(new Date(event.startDate).getTime() / 1000);
+            const endTime = Math.floor(new Date(event.endDate).getTime() / 1000);
+
+            if (isNaN(startTime) || isNaN(endTime)) continue;
+
+            newEvents.push({
+                id,
+                name,
+                startTime,
+                endTime,
+                durationMin: parsed.duration,
+                numRounds: parsed.rounds,
+                triggered: oldTriggered.get(id) || false
+            });
+
+            console.log(`  ✅ ${name} — ${parsed.duration}min${parsed.rounds ? ' ' + parsed.rounds + 'rounds' : ' continuous'}`);
+
+            if (newEvents.length >= 20) break;
+        }
+
+        cachedEvents = newEvents;
+        lastHCSync = Date.now();
+        console.log(`📅 Cached ${cachedEvents.length} events with timer: tag`);
+        return true;
+
+    } catch (err) {
+        console.error(`❌ Hello Club API error: ${err.message}`);
+        return false;
+    }
+}
+
+// Purge expired events
+function purgeExpiredEvents() {
+    const nowSec = Math.floor(Date.now() / 1000);
+    const before = cachedEvents.length;
+    cachedEvents = cachedEvents.filter(e => e.endTime >= nowSec);
+    if (cachedEvents.length < before) {
+        console.log(`🗑️  Purged ${before - cachedEvents.length} expired events`);
+    }
+}
+
+// ==========================================================================
+// Client tracking & messaging
+// ==========================================================================
+
 const clients = new Map();
 let nextClientId = 1;
 
-/**
- * Get current time formatted in the selected timezone
- */
 function getFormattedTime() {
     try {
         return new Date().toLocaleTimeString('en-US', {
-            hour: '2-digit',
-            minute: '2-digit',
-            second: '2-digit',
-            hour12: true,
-            timeZone: currentTimezone
+            hour: '2-digit', minute: '2-digit', second: '2-digit',
+            hour12: true, timeZone: currentTimezone
         });
     } catch (err) {
-        console.error(`Error formatting time for timezone ${currentTimezone}:`, err);
-        // Fallback to system time
         return new Date().toLocaleTimeString('en-US', {
-            hour: '2-digit',
-            minute: '2-digit',
-            second: '2-digit',
-            hour12: true
+            hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true
         });
     }
 }
 
-/**
- * Get current date/time in ISO-like format for the selected timezone
- */
-function getFormattedDateTime() {
-    try {
-        const date = new Date();
-        const dateStr = date.toLocaleDateString('en-CA', { timeZone: currentTimezone }); // YYYY-MM-DD
-        const timeStr = date.toLocaleTimeString('en-GB', {
-            hour: '2-digit',
-            minute: '2-digit',
-            second: '2-digit',
-            hour12: false,
-            timeZone: currentTimezone
-        }); // HH:mm:ss
-        return `${dateStr} ${timeStr}`;
-    } catch (err) {
-        console.error(`Error formatting datetime for timezone ${currentTimezone}:`, err);
-        return new Date().toISOString().replace('T', ' ').substring(0, 19);
-    }
+function sendMessage(ws, data) {
+    if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(data));
 }
+
+function sendError(ws, message) {
+    sendMessage(ws, { event: 'error', message });
+}
+
+function broadcast(data) {
+    clients.forEach(client => sendMessage(client.ws, data));
+}
+
+function buildSyncMessage() {
+    return {
+        event: 'sync',
+        status: timerStatus,
+        mainTimerRemaining,
+        currentRound,
+        numRounds: settings.numRounds,
+        pauseAfterNext,
+        continuousMode,
+        activeEventEndTime,
+        activeEventName
+    };
+}
+
+// ==========================================================================
+// WebSocket connections
+// ==========================================================================
 
 wss.on('connection', (ws) => {
     const clientId = nextClientId++;
-    clients.set(clientId, {
-        ws,
-        role: 'viewer',
-        username: 'Viewer'
-    });
-
+    clients.set(clientId, { ws, role: 'viewer', username: 'Viewer' });
     console.log(`✅ Client ${clientId} connected`);
 
-    // Send initial settings
-    sendMessage(ws, {
-        event: 'settings',
-        settings: settings
-    });
-
-    // Send initial state
+    sendMessage(ws, { event: 'settings', settings });
     sendMessage(ws, {
         event: 'state',
         state: {
             status: timerStatus,
             time: getFormattedTime(),
-            currentRound: currentRound,
+            currentRound,
             numRounds: settings.numRounds,
             mainTimer: mainTimerRemaining,
-            breakTimer: breakTimerRemaining
+            pauseAfterNext,
+            continuousMode,
+            activeEventEndTime,
+            activeEventName
         }
     });
-
-    // Send sync event with current timer state
-    sendMessage(ws, {
-        event: 'sync',
-        status: timerStatus,
-        mainTimerRemaining: mainTimerRemaining,
-        breakTimerRemaining: breakTimerRemaining,
-        currentRound: currentRound,
-        numRounds: settings.numRounds
-    });
-
-    // Send NTP status
+    sendMessage(ws, buildSyncMessage());
     sendMessage(ws, {
         event: 'ntp_status',
         synced: true,
         time: getFormattedTime(),
         timezone: currentTimezone,
-        dateTime: getFormattedDateTime(),
         autoSyncInterval: 30
     });
 
@@ -251,9 +338,13 @@ wss.on('connection', (ws) => {
     });
 });
 
+// ==========================================================================
+// Message handler
+// ==========================================================================
+
 function handleMessage(clientId, ws, msg) {
     const client = clients.get(clientId);
-    console.log(`📨 Client ${clientId} [${client.username}]: ${msg.action}`);
+    console.log(`📨 Client ${clientId} [${client.username}/${client.role}]: ${msg.action}`);
 
     switch (msg.action) {
         case 'authenticate':
@@ -261,30 +352,28 @@ function handleMessage(clientId, ws, msg) {
             break;
 
         case 'start':
-            if (client.role === 'viewer') {
-                sendError(ws, 'Permission denied - viewer mode');
-                return;
-            }
+            if (client.role === 'viewer') { sendError(ws, 'Permission denied'); return; }
             timerStatus = 'RUNNING';
             mainTimerRemaining = settings.gameDuration;
-            breakTimerRemaining = settings.breakDuration;
             currentRound = 1;
+            pauseAfterNext = false;
+            continuousMode = false;
             broadcast({
                 event: 'start',
                 status: 'RUNNING',
                 gameDuration: settings.gameDuration,
-                breakDuration: settings.breakDuration,
-                currentRound: currentRound,
-                numRounds: settings.numRounds
+                currentRound,
+                numRounds: settings.numRounds,
+                pauseAfterNext,
+                continuousMode,
+                activeEventEndTime,
+                activeEventName
             });
             console.log('⏱️  Timer started');
             break;
 
         case 'pause':
-            if (client.role === 'viewer') {
-                sendError(ws, 'Permission denied - viewer mode');
-                return;
-            }
+            if (client.role === 'viewer') { sendError(ws, 'Permission denied'); return; }
             if (timerStatus === 'RUNNING') {
                 timerStatus = 'PAUSED';
                 broadcast({ event: 'pause' });
@@ -296,146 +385,47 @@ function handleMessage(clientId, ws, msg) {
             }
             break;
 
+        case 'pause_after_next':
+            if (client.role === 'viewer') { sendError(ws, 'Permission denied'); return; }
+            pauseAfterNext = msg.enabled === true;
+            broadcast(buildSyncMessage());
+            console.log(`⏭️  Pause after next: ${pauseAfterNext}`);
+            break;
+
         case 'reset':
-            if (client.role === 'viewer') {
-                sendError(ws, 'Permission denied - viewer mode');
-                return;
-            }
+            if (client.role === 'viewer') { sendError(ws, 'Permission denied'); return; }
             timerStatus = 'IDLE';
             mainTimerRemaining = 0;
-            breakTimerRemaining = 0;
             currentRound = 1;
+            pauseAfterNext = false;
+            continuousMode = false;
+            activeEventEndTime = 0;
+            activeEventName = '';
             broadcast({ event: 'reset' });
             console.log('⏹️  Timer reset');
             break;
 
         case 'save_settings':
-            if (client.role === 'viewer') {
-                sendError(ws, 'Permission denied - viewer mode');
-                return;
-            }
-            // Update settings
-            if (msg.settings) {
-                settings = { ...settings, ...msg.settings };
-            }
-            // Broadcast updated settings to all clients
-            broadcast({ event: 'settings', settings: settings });
+            if (client.role === 'viewer') { sendError(ws, 'Permission denied'); return; }
+            if (msg.settings) settings = { ...settings, ...msg.settings };
+            broadcast({ event: 'settings', settings });
             console.log('💾 Settings saved:', settings);
             break;
 
-        case 'set_duration':
-            // Deprecated - use save_settings instead
-            if (client.role === 'viewer') {
-                sendError(ws, 'Permission denied - viewer mode');
-                return;
-            }
-            console.log('⚠️  set_duration is deprecated - use save_settings instead');
-            break;
-
-        case 'enable_scheduling':
-            if (client.role === 'viewer') {
-                sendError(ws, 'Permission denied - viewer mode');
-                return;
-            }
-            schedulingEnabled = msg.enabled === true;
-            broadcast({ event: 'scheduling_enabled', enabled: schedulingEnabled });
-            console.log(`📅 Scheduling ${schedulingEnabled ? 'enabled' : 'disabled'}`);
-            break;
-
-        case 'get_schedules':
-            const userSchedules = client.role === 'admin'
-                ? schedules
-                : schedules.filter(s => s.ownerUsername === client.username);
-            sendMessage(ws, {
-                event: 'schedules_list',
-                schedules: userSchedules,
-                schedulingEnabled: schedulingEnabled
-            });
-            break;
-
-        case 'add_schedule':
-            if (client.role === 'viewer') {
-                sendError(ws, 'Permission denied - viewer mode');
-                return;
-            }
-            const newSchedule = {
-                ...msg.schedule,
-                id: `mock-${Date.now()}`,
-                ownerUsername: client.username,
-                createdAt: Date.now()
-            };
-            schedules.push(newSchedule);
-            sendMessage(ws, { event: 'schedule_added', schedule: newSchedule });
-            console.log(`➕ Schedule added: ${newSchedule.clubName}`);
-            break;
-
-        case 'update_schedule':
-            if (client.role === 'viewer') {
-                sendError(ws, 'Permission denied - viewer mode');
-                return;
-            }
-            const scheduleIndex = schedules.findIndex(s => s.id === msg.schedule.id);
-            if (scheduleIndex === -1) {
-                sendError(ws, 'Schedule not found');
-                return;
-            }
-            const existing = schedules[scheduleIndex];
-            if (client.role !== 'admin' && existing.ownerUsername !== client.username) {
-                sendError(ws, 'Permission denied - you can only edit your own schedules');
-                return;
-            }
-            schedules[scheduleIndex] = {
-                ...msg.schedule,
-                ownerUsername: existing.ownerUsername,
-                createdAt: existing.createdAt
-            };
-            sendMessage(ws, { event: 'schedule_updated', schedule: schedules[scheduleIndex] });
-            console.log(`✏️  Schedule updated: ${schedules[scheduleIndex].clubName}`);
-            break;
-
-        case 'delete_schedule':
-            if (client.role === 'viewer') {
-                sendError(ws, 'Permission denied - viewer mode');
-                return;
-            }
-            const deleteIndex = schedules.findIndex(s => s.id === msg.id);
-            if (deleteIndex === -1) {
-                sendError(ws, 'Schedule not found');
-                return;
-            }
-            const toDelete = schedules[deleteIndex];
-            if (client.role !== 'admin' && toDelete.ownerUsername !== client.username) {
-                sendError(ws, 'Permission denied - you can only delete your own schedules');
-                return;
-            }
-            schedules.splice(deleteIndex, 1);
-            sendMessage(ws, { event: 'schedule_deleted', id: msg.id });
-            console.log(`🗑️  Schedule deleted: ${toDelete.clubName}`);
-            break;
-
         case 'get_operators':
-            if (client.role !== 'admin') {
-                sendError(ws, 'Permission denied - admin only');
-                return;
-            }
-            sendMessage(ws, { event: 'operators_list', operators: operators.map(o => ({ username: o.username })) });
+            if (client.role !== 'admin') { sendError(ws, 'Admin only'); return; }
+            sendMessage(ws, { event: 'operators_list', operators: operators.map(o => o.username) });
             break;
 
         case 'add_operator':
-            if (client.role !== 'admin') {
-                sendError(ws, 'Permission denied - admin only');
-                return;
-            }
+            if (client.role !== 'admin') { sendError(ws, 'Admin only'); return; }
             operators.push({ username: msg.username, password: msg.password });
             sendMessage(ws, { event: 'operator_added', username: msg.username });
             console.log(`👤 Operator added: ${msg.username}`);
             break;
 
         case 'remove_operator':
-            if (client.role !== 'admin') {
-                sendError(ws, 'Permission denied - admin only');
-                return;
-            }
+            if (client.role !== 'admin') { sendError(ws, 'Admin only'); return; }
             operators = operators.filter(o => o.username !== msg.username);
             sendMessage(ws, { event: 'operator_removed', username: msg.username });
             console.log(`👤 Operator removed: ${msg.username}`);
@@ -446,247 +436,108 @@ function handleMessage(clientId, ws, msg) {
             break;
 
         case 'set_timezone':
-            if (client.role !== 'admin') {
-                sendError(ws, 'Permission denied - admin only');
-                return;
-            }
-            const newTimezone = msg.timezone || 'Pacific/Auckland';
-            currentTimezone = newTimezone; // Update server timezone
-            sendMessage(ws, {
-                event: 'timezone_changed',
-                timezone: newTimezone
-            });
-            // Broadcast updated NTP status to all clients
-            broadcast({
-                event: 'ntp_status',
-                synced: true,
-                time: getFormattedTime(),
-                timezone: currentTimezone,
-                dateTime: getFormattedDateTime(),
-                autoSyncInterval: 30
-            });
-            console.log(`🌍 Timezone changed to: ${newTimezone}`);
+            if (client.role !== 'admin') { sendError(ws, 'Admin only'); return; }
+            currentTimezone = msg.timezone || 'Pacific/Auckland';
+            sendMessage(ws, { event: 'timezone_changed', timezone: currentTimezone });
+            broadcast({ event: 'ntp_status', synced: true, time: getFormattedTime(), timezone: currentTimezone, autoSyncInterval: 30 });
+            console.log(`🌍 Timezone changed to: ${currentTimezone}`);
             break;
 
         case 'factory_reset':
-            if (client.role !== 'admin') {
-                sendError(ws, 'Permission denied - admin only');
-                return;
-            }
-            schedules = [];
+            if (client.role !== 'admin') { sendError(ws, 'Admin only'); return; }
             operators = [];
-            schedulingEnabled = false;
-            currentTimezone = 'Pacific/Auckland'; // Reset timezone to default
+            currentTimezone = 'Pacific/Auckland';
             sendMessage(ws, { event: 'factory_reset_complete' });
             console.log('🔄 Factory reset completed');
             break;
 
-        // Hello Club Integration
+        // Hello Club settings
         case 'get_helloclub_settings':
-            if (client.role !== 'admin') {
-                sendError(ws, 'Permission denied - admin only');
-                return;
-            }
+            if (client.role !== 'admin') { sendError(ws, 'Admin only'); return; }
             sendMessage(ws, {
                 event: 'helloclub_settings',
-                ...helloClubSettings
+                apiKey: hcApiKey ? '***configured***' : '',
+                enabled: hcEnabled,
+                defaultDuration: hcDefaultDuration
             });
-            console.log('⚙️  Hello Club settings requested');
             break;
 
         case 'save_helloclub_settings':
-            if (client.role !== 'admin') {
-                sendError(ws, 'Permission denied - admin only');
-                return;
-            }
+            if (client.role !== 'admin') { sendError(ws, 'Admin only'); return; }
             if (msg.apiKey && msg.apiKey !== '***configured***') {
-                helloClubSettings.apiKey = '***configured***'; // Mask in test mode
+                hcApiKey = msg.apiKey;
+                console.log(`🔑 HC API key set (${hcApiKey.substring(0, 8)}...)`);
             }
-            if (msg.enabled !== undefined) helloClubSettings.enabled = msg.enabled;
-            if (msg.daysAhead !== undefined) helloClubSettings.daysAhead = msg.daysAhead;
-            if (msg.categoryFilter !== undefined) helloClubSettings.categoryFilter = msg.categoryFilter;
-            if (msg.syncHour !== undefined) helloClubSettings.syncHour = msg.syncHour;
+            if (msg.enabled !== undefined) hcEnabled = msg.enabled;
+            if (msg.defaultDuration !== undefined) hcDefaultDuration = msg.defaultDuration;
+            sendMessage(ws, { event: 'helloclub_settings_saved', message: 'Hello Club settings saved successfully' });
+            console.log(`💾 HC settings saved — key:${hcApiKey ? 'yes' : 'no'} enabled:${hcEnabled} defaultDur:${hcDefaultDuration}min`);
 
-            sendMessage(ws, {
-                event: 'helloclub_settings_saved',
-                message: 'Hello Club settings saved successfully'
-            });
-            console.log('💾 Hello Club settings saved');
+            // Auto-fetch events when API key is first set
+            if (hcApiKey && hcEnabled) {
+                fetchAndCacheEvents().then(success => {
+                    if (success) {
+                        broadcast({ event: 'upcoming_events', events: cachedEvents, lastSync: lastHCSync });
+                    }
+                });
+            }
             break;
 
-        case 'get_helloclub_categories':
-            if (client.role !== 'admin') {
-                sendError(ws, 'Permission denied - admin only');
-                return;
-            }
+        // Upcoming events
+        case 'get_upcoming_events':
             sendMessage(ws, {
-                event: 'helloclub_categories',
-                categories: mockHelloClubCategories
+                event: 'upcoming_events',
+                events: cachedEvents,
+                lastSync: lastHCSync
             });
-            console.log('📋 Hello Club categories requested');
+            console.log(`📅 Upcoming events sent (${cachedEvents.length})`);
             break;
 
-        case 'get_helloclub_events':
-            if (client.role !== 'admin') {
-                sendError(ws, 'Permission denied - admin only');
+        case 'helloclub_refresh':
+            if (client.role !== 'admin') { sendError(ws, 'Admin only'); return; }
+            if (!hcApiKey) {
+                sendMessage(ws, { event: 'helloclub_refresh_result', success: false, message: 'API key not configured' });
                 return;
             }
-
-            // Filter events by category if filter is set
-            let filteredEvents = mockHelloClubEvents;
-            if (helloClubSettings.categoryFilter) {
-                const filterCategories = helloClubSettings.categoryFilter.split(',').map(c => c.trim());
-                filteredEvents = mockHelloClubEvents.filter(event =>
-                    filterCategories.includes(event.categoryName)
-                );
-            }
-
-            // Check for conflicts with existing schedules
-            const eventsWithConflicts = filteredEvents.map(event => {
-                const eventDate = new Date(event.startDate);
-                const dayOfWeek = eventDate.getDay();
-                const hour = eventDate.getHours();
-                const minute = eventDate.getMinutes();
-
-                const conflictingSchedule = schedules.find(s =>
-                    s.dayOfWeek === dayOfWeek &&
-                    s.startHour === hour &&
-                    s.startMinute === minute
-                );
-
-                return {
-                    ...event,
-                    hasConflict: !!conflictingSchedule,
-                    conflictWith: conflictingSchedule ? conflictingSchedule.clubName : undefined
-                };
-            });
-
-            sendMessage(ws, {
-                event: 'helloclub_events',
-                events: eventsWithConflicts
-            });
-            console.log(`📅 Hello Club events requested (${eventsWithConflicts.length} events)`);
-            break;
-
-        case 'import_helloclub_events':
-            if (client.role !== 'admin') {
-                sendError(ws, 'Permission denied - admin only');
-                return;
-            }
-
-            const eventIds = msg.eventIds || [];
-            let imported = 0;
-            let skipped = 0;
-
-            eventIds.forEach(eventId => {
-                const event = mockHelloClubEvents.find(e => e.id === eventId);
-                if (!event) {
-                    skipped++;
-                    return;
-                }
-
-                const eventDate = new Date(event.startDate);
-                const scheduleId = `hc-${eventId}`;
-
-                // Check if already exists
-                const existingIndex = schedules.findIndex(s => s.id === scheduleId);
-
-                const newSchedule = {
-                    id: scheduleId,
-                    clubName: event.name,
-                    ownerUsername: 'HelloClub',
-                    dayOfWeek: eventDate.getDay(),
-                    startHour: eventDate.getHours(),
-                    startMinute: eventDate.getMinutes(),
-                    durationMinutes: event.durationMinutes,
-                    enabled: true,
-                    createdAt: Date.now()
-                };
-
-                if (existingIndex >= 0) {
-                    schedules[existingIndex] = newSchedule;
+            fetchAndCacheEvents().then(success => {
+                if (success) {
+                    sendMessage(ws, {
+                        event: 'helloclub_refresh_result',
+                        success: true,
+                        eventCount: cachedEvents.length
+                    });
+                    broadcast({ event: 'upcoming_events', events: cachedEvents, lastSync: lastHCSync });
+                    console.log(`🔄 Hello Club refreshed: ${cachedEvents.length} events`);
                 } else {
-                    schedules.push(newSchedule);
+                    sendMessage(ws, {
+                        event: 'helloclub_refresh_result',
+                        success: false,
+                        message: 'Failed to fetch events from Hello Club'
+                    });
                 }
-                imported++;
-                console.log(`📥 Imported: ${event.name}`);
             });
-
-            sendMessage(ws, {
-                event: 'helloclub_import_complete',
-                imported,
-                skipped
-            });
-            console.log(`✅ Hello Club import: ${imported} imported, ${skipped} skipped`);
             break;
 
-        case 'sync_helloclub_now':
-            if (client.role !== 'admin') {
-                sendError(ws, 'Permission denied - admin only');
-                return;
-            }
-
-            // Auto-import all matching events
-            let autoImported = 0;
-            let autoSkipped = 0;
-
-            let eventsToSync = mockHelloClubEvents;
-            if (helloClubSettings.categoryFilter) {
-                const filterCategories = helloClubSettings.categoryFilter.split(',').map(c => c.trim());
-                eventsToSync = mockHelloClubEvents.filter(event =>
-                    filterCategories.includes(event.categoryName)
-                );
-            }
-
-            eventsToSync.forEach(event => {
-                const eventDate = new Date(event.startDate);
-                const dayOfWeek = eventDate.getDay();
-                const hour = eventDate.getHours();
-                const minute = eventDate.getMinutes();
-
-                // Check for conflicts
-                const hasConflict = schedules.some(s =>
-                    s.dayOfWeek === dayOfWeek &&
-                    s.startHour === hour &&
-                    s.startMinute === minute &&
-                    !s.id.startsWith('hc-')
-                );
-
-                if (hasConflict) {
-                    autoSkipped++;
-                    return;
-                }
-
-                const scheduleId = `hc-${event.id}`;
-                const existingIndex = schedules.findIndex(s => s.id === scheduleId);
-
-                const newSchedule = {
-                    id: scheduleId,
-                    clubName: event.name,
-                    ownerUsername: 'HelloClub',
-                    dayOfWeek: dayOfWeek,
-                    startHour: hour,
-                    startMinute: minute,
-                    durationMinutes: event.durationMinutes,
-                    enabled: true,
-                    createdAt: Date.now()
-                };
-
-                if (existingIndex >= 0) {
-                    schedules[existingIndex] = newSchedule;
-                } else {
-                    schedules.push(newSchedule);
-                }
-                autoImported++;
-            });
-
-            helloClubSettings.lastSyncDay = new Date().getDay();
-
+        // QR
+        case 'get_qr_config':
             sendMessage(ws, {
-                event: 'helloclub_sync_complete',
-                message: `Sync complete: ${autoImported} imported, ${autoSkipped} skipped`
+                event: 'qr_config',
+                ssid: qrConfig.ssidOverride || qrConfig.connectedSsid,
+                ssidOverride: qrConfig.ssidOverride,
+                connectedSsid: qrConfig.connectedSsid,
+                password: qrConfig.password,
+                encryption: qrConfig.encryption,
+                appUrl: `http://${lanIp}:${PORT}/`
             });
-            console.log(`🔄 Hello Club sync: ${autoImported} imported, ${autoSkipped} skipped`);
+            break;
+
+        case 'save_qr_settings':
+            if (client.role !== 'admin') { sendError(ws, 'Admin only'); return; }
+            qrConfig.ssidOverride = msg.ssid || '';
+            qrConfig.password = msg.password || '';
+            qrConfig.encryption = msg.encryption || 'WPA';
+            sendMessage(ws, { event: 'qr_settings_saved' });
+            console.log('💾 QR settings saved');
             break;
 
         default:
@@ -694,150 +545,204 @@ function handleMessage(clientId, ws, msg) {
     }
 }
 
+// ==========================================================================
+// Auth
+// ==========================================================================
+
 function handleAuth(clientId, ws, msg) {
     const client = clients.get(clientId);
 
-    // Viewer mode (empty credentials)
     if (!msg.username && !msg.password) {
         client.role = 'viewer';
         client.username = 'Viewer';
-        sendMessage(ws, {
-            event: 'auth_success',
-            role: 'viewer',
-            username: 'Viewer'
-        });
+        sendMessage(ws, { event: 'auth_success', role: 'viewer', username: 'Viewer' });
         console.log(`👁️  Client ${clientId} viewing as guest`);
         return;
     }
 
-    // Admin check
     if (msg.username === 'admin' && msg.password === 'admin') {
         client.role = 'admin';
         client.username = 'admin';
-        sendMessage(ws, {
-            event: 'auth_success',
-            role: 'admin',
-            username: 'admin'
-        });
+        sendMessage(ws, { event: 'auth_success', role: 'admin', username: 'admin' });
         console.log(`🔑 Client ${clientId} logged in as ADMIN`);
         return;
     }
 
-    // Operator check
     const operator = operators.find(o => o.username === msg.username && o.password === msg.password);
     if (operator) {
         client.role = 'operator';
         client.username = operator.username;
-        sendMessage(ws, {
-            event: 'auth_success',
-            role: 'operator',
-            username: operator.username
-        });
+        sendMessage(ws, { event: 'auth_success', role: 'operator', username: operator.username });
         console.log(`🔑 Client ${clientId} logged in as OPERATOR: ${operator.username}`);
         return;
     }
 
-    // Failed auth
-    sendMessage(ws, {
-        event: 'auth_failed',
-        message: 'Invalid username or password'
-    });
+    sendMessage(ws, { event: 'auth_failed', message: 'Invalid username or password' });
     console.log(`❌ Client ${clientId} authentication failed`);
 }
 
 function handlePasswordChange(clientId, ws, msg) {
     const client = clients.get(clientId);
-
     if (client.role === 'admin') {
         sendMessage(ws, { event: 'password_changed' });
         console.log('🔐 Admin password changed');
     } else if (client.role === 'operator') {
-        const operator = operators.find(o => o.username === client.username);
-        if (operator && operator.password === msg.oldPassword) {
-            operator.password = msg.newPassword;
+        const op = operators.find(o => o.username === client.username);
+        if (op && op.password === msg.oldPassword) {
+            op.password = msg.newPassword;
             sendMessage(ws, { event: 'password_changed' });
             console.log(`🔐 Password changed for: ${client.username}`);
         } else {
-            sendError(ws, 'ERR_PASSWORD_CHANGE: Old password is incorrect');
+            sendError(ws, 'Old password is incorrect');
         }
     }
 }
 
-function sendMessage(ws, data) {
-    if (ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify(data));
-    }
-}
+// ==========================================================================
+// Timer countdown loop (1 second tick)
+// ==========================================================================
 
-function sendError(ws, message) {
-    sendMessage(ws, { event: 'error', message });
-}
-
-function broadcast(data) {
-    clients.forEach(client => {
-        sendMessage(client.ws, data);
-    });
-}
-
-// Simulate timer countdown
 setInterval(() => {
-    if (timerStatus === 'RUNNING') {
-        // Countdown main timer
-        if (mainTimerRemaining > 0) {
-            mainTimerRemaining -= 1000; // Decrease by 1 second (1000ms)
-            if (mainTimerRemaining < 0) mainTimerRemaining = 0;
+    if (timerStatus !== 'RUNNING') return;
+
+    if (mainTimerRemaining > 0) {
+        mainTimerRemaining -= 1000;
+        if (mainTimerRemaining < 0) mainTimerRemaining = 0;
+    }
+
+    // Event window hard cutoff
+    if (activeEventEndTime > 0) {
+        const nowSec = Math.floor(Date.now() / 1000);
+        if (nowSec >= activeEventEndTime) {
+            timerStatus = 'IDLE';
+            mainTimerRemaining = 0;
+            continuousMode = false;
+            activeEventEndTime = 0;
+            activeEventName = '';
+            broadcast({ event: 'event_cutoff', message: 'Session ended - booking time expired' });
+            broadcast({ event: 'reset' });
+            console.log('⏰ Event window expired — hard cutoff');
+            return;
         }
+    }
 
-        // Countdown break timer
-        if (breakTimerRemaining > 0) {
-            breakTimerRemaining -= 1000;
-            if (breakTimerRemaining < 0) breakTimerRemaining = 0;
-        }
+    // Send sync
+    broadcast(buildSyncMessage());
 
-        // Send sync event to all clients
-        broadcast({
-            event: 'sync',
-            status: timerStatus,
-            mainTimerRemaining: mainTimerRemaining,
-            breakTimerRemaining: breakTimerRemaining,
-            currentRound: currentRound,
-            numRounds: settings.numRounds
-        });
-
-        // Check if round finished
-        if (mainTimerRemaining === 0 && breakTimerRemaining === 0) {
-            if (currentRound < settings.numRounds) {
-                // Start next round
+    // Check round finished
+    if (mainTimerRemaining === 0) {
+        if (continuousMode || currentRound < settings.numRounds) {
+            if (pauseAfterNext) {
                 currentRound++;
                 mainTimerRemaining = settings.gameDuration;
-                breakTimerRemaining = settings.breakDuration;
+                timerStatus = 'PAUSED';
+                pauseAfterNext = false;
+                broadcast({ event: 'pause' });
+                broadcast(buildSyncMessage());
+                console.log(`⏸️  Paused after round — now round ${currentRound}`);
+            } else {
+                currentRound++;
+                mainTimerRemaining = settings.gameDuration;
                 broadcast({
                     event: 'new_round',
                     status: 'RUNNING',
                     gameDuration: settings.gameDuration,
-                    breakDuration: settings.breakDuration,
-                    currentRound: currentRound,
-                    numRounds: settings.numRounds
+                    currentRound,
+                    numRounds: settings.numRounds,
+                    pauseAfterNext,
+                    continuousMode,
+                    activeEventEndTime,
+                    activeEventName
                 });
                 console.log(`🔄 Starting round ${currentRound}`);
-            } else {
-                // All rounds finished
-                timerStatus = 'FINISHED';
-                broadcast({ event: 'finished' });
-                console.log('⏰ All rounds finished!');
             }
+        } else {
+            timerStatus = 'FINISHED';
+            continuousMode = false;
+            activeEventEndTime = 0;
+            activeEventName = '';
+            broadcast({ event: 'finished' });
+            console.log('⏰ All rounds finished!');
         }
     }
 }, 1000);
 
-// Simulate NTP status updates
+// ==========================================================================
+// NTP status broadcast
+// ==========================================================================
+
 setInterval(() => {
     broadcast({
         event: 'ntp_status',
         synced: true,
         time: getFormattedTime(),
         timezone: currentTimezone,
-        dateTime: getFormattedDateTime(),
         autoSyncInterval: 30
     });
 }, 5000);
+
+// ==========================================================================
+// Auto-trigger check (every 10 seconds)
+// ==========================================================================
+
+setInterval(() => {
+    if (!hcEnabled) return;
+    if (timerStatus !== 'IDLE' && timerStatus !== 'FINISHED') return;
+
+    const nowSec = Math.floor(Date.now() / 1000);
+    for (const ev of cachedEvents) {
+        if (ev.triggered) continue;
+        if (nowSec >= ev.startTime && nowSec <= ev.startTime + HC_TRIGGER_WINDOW_SEC) {
+            ev.triggered = true;
+
+            // Configure and start timer
+            settings.gameDuration = ev.durationMin * 60 * 1000;
+            timerStatus = 'RUNNING';
+            mainTimerRemaining = settings.gameDuration;
+            currentRound = 1;
+            pauseAfterNext = false;
+
+            if (ev.numRounds > 0) {
+                settings.numRounds = ev.numRounds;
+                continuousMode = false;
+            } else {
+                continuousMode = true;
+            }
+
+            activeEventEndTime = ev.endTime;
+            activeEventName = ev.name;
+
+            broadcast({ event: 'event_auto_started', eventName: ev.name, durationMin: ev.durationMin, eventEndTime: ev.endTime });
+            broadcast({
+                event: 'start',
+                status: 'RUNNING',
+                gameDuration: settings.gameDuration,
+                currentRound,
+                numRounds: settings.numRounds,
+                pauseAfterNext,
+                continuousMode,
+                activeEventEndTime,
+                activeEventName
+            });
+            broadcast({ event: 'upcoming_events', events: cachedEvents, lastSync: lastHCSync });
+            console.log(`🚀 Auto-triggered: ${ev.name} (${ev.durationMin}min, ${ev.numRounds > 0 ? ev.numRounds + ' rounds' : 'continuous'})`);
+            break;
+        }
+    }
+}, 10000);
+
+// ==========================================================================
+// Hourly HC poll (+ purge expired)
+// ==========================================================================
+
+setInterval(() => {
+    purgeExpiredEvents();
+    if (hcEnabled && hcApiKey) {
+        console.log('⏰ Hourly Hello Club poll...');
+        fetchAndCacheEvents().then(success => {
+            if (success) {
+                broadcast({ event: 'upcoming_events', events: cachedEvents, lastSync: lastHCSync });
+            }
+        });
+    }
+}, 60 * 60 * 1000); // Every hour

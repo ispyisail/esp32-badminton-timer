@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html>
+<head><title>QR Test</title></head>
+<body>
+<h2>QR Library Test</h2>
+<pre id="log" style="background:#ffe0e0;padding:10px;font-size:14px;white-space:pre-wrap;"></pre>
+<div id="test1" style="width:200px;height:200px;border:2px solid red;"></div>
+
+<script>
+var logEl = document.getElementById('log');
+function log(msg) { logEl.textContent += msg + '\n'; }
+log('Step 1: before loading qrcode.min.js');
+
+// Listen for errors from the next script
+window.addEventListener('error', function(e) {
+    log('SCRIPT ERROR: ' + e.message + ' at ' + e.filename + ':' + e.lineno + ':' + e.colno);
+});
+</script>
+<script src="qrcode.min.js"></script>
+<script>
+log('Step 2: after loading qrcode.min.js');
+log('typeof QrCreator = ' + typeof QrCreator);
+log('typeof self.QrCreator = ' + typeof self.QrCreator);
+log('typeof window.QrCreator = ' + typeof window.QrCreator);
+
+// Check all window keys with qr/QR
+var allKeys = Object.getOwnPropertyNames(window);
+var qrKeys = allKeys.filter(function(k) { return /qr/i.test(k); });
+log('QR-related window keys: ' + (qrKeys.length ? qrKeys.join(', ') : 'none'));
+
+// Check if self === window
+log('self === window: ' + (self === window));
+
+// Try to see if H or G leaked
+log('typeof H = ' + typeof H);
+log('typeof G = ' + typeof G);
+
+if (typeof QrCreator !== 'undefined') {
+    log('typeof QrCreator.render = ' + typeof QrCreator.render);
+    try {
+        var div = document.getElementById('test1');
+        log('Calling QrCreator.render...');
+        QrCreator.render({ text: 'hello', size: 200 }, div);
+        log('render() done. Children: ' + div.children.length);
+        log(div.querySelector('canvas') ? 'SUCCESS: canvas found' : 'FAIL: no canvas');
+    } catch(e) {
+        log('ERROR: ' + e.name + ': ' + e.message);
+        log('Stack: ' + (e.stack || '').split('\n').slice(0,3).join('\n'));
+    }
+} else {
+    log('FAIL: QrCreator is undefined');
+    // Try fetching and eval-ing to see if that helps
+    log('Trying inline eval test...');
+    try {
+        var x = {};
+        x.QrCreator = 'test';
+        log('Object assignment works: ' + x.QrCreator);
+    } catch(e2) {
+        log('Even basic assignment failed: ' + e2.message);
+    }
+}
+</script>
+</body>
+</html>

@@ -4,63 +4,45 @@
 Timer::Timer()
     : state(IDLE)
     , gameDuration(DEFAULT_GAME_DURATION)
-    , breakDuration(DEFAULT_BREAK_DURATION)
     , numRounds(DEFAULT_NUM_ROUNDS)
-    , breakTimerEnabled(DEFAULT_BREAK_TIMER_ENABLED)
     , currentRound(1)
     , mainTimerStart(0)
-    , breakTimerStart(0)
     , mainTimerRemaining(0)
-    , breakTimerRemaining(0)
-    , breakSirenSounded(false)
+    , pauseAfterNext(false)
+    , continuousMode(false)
     , stateChanged(false)
-    , breakEnded(false)
     , roundEnded(false)
 {
 }
 
 bool Timer::update() {
-    // Reset flags
     stateChanged = false;
-    breakEnded = false;
     roundEnded = false;
 
-    // Only process if timer is running
     if (state != RUNNING) {
         return false;
     }
 
     unsigned long now = millis();
-
-    // Calculate elapsed time with overflow protection
     unsigned long mainElapsed = calculateElapsed(mainTimerStart, now);
-    unsigned long breakElapsed = calculateElapsed(breakTimerStart, now);
 
-    // Update remaining times
     mainTimerRemaining = (mainElapsed < gameDuration) ? (gameDuration - mainElapsed) : 0;
-    breakTimerRemaining = (breakElapsed < breakDuration) ? (breakDuration - breakElapsed) : 0;
 
-    // Check if break period has ended
-    if (breakTimerEnabled && !breakSirenSounded && breakTimerRemaining == 0) {
-        breakSirenSounded = true;
-        breakEnded = true;
-        stateChanged = true;
-    }
-
-    // Check if round has ended
     if (mainTimerRemaining == 0) {
         roundEnded = true;
         stateChanged = true;
 
-        if (currentRound >= numRounds) {
-            // Match finished
+        if (currentRound >= numRounds && !continuousMode) {
             state = FINISHED;
+        } else if (pauseAfterNext) {
+            // Siren fires (handled by caller) THEN pause
+            currentRound++;
+            mainTimerRemaining = gameDuration;  // Load next round
+            state = PAUSED;                     // But don't start it
+            pauseAfterNext = false;             // One-shot, auto-clear
         } else {
-            // Start next round
             currentRound++;
             mainTimerStart = millis();
-            breakTimerStart = millis();
-            breakSirenSounded = false;
         }
     }
 
@@ -72,49 +54,30 @@ void Timer::start() {
         state = RUNNING;
         currentRound = 1;
         mainTimerStart = millis();
-        breakTimerStart = millis();
         mainTimerRemaining = gameDuration;
-        breakTimerRemaining = breakDuration;
-        breakSirenSounded = false;
+        pauseAfterNext = false;
     }
 }
 
 void Timer::pause() {
     if (state == RUNNING) {
         state = PAUSED;
-        // Capture remaining time at pause moment
         unsigned long now = millis();
         unsigned long mainElapsed = calculateElapsed(mainTimerStart, now);
-        unsigned long breakElapsed = calculateElapsed(breakTimerStart, now);
         mainTimerRemaining = (mainElapsed < gameDuration) ? (gameDuration - mainElapsed) : 0;
-        breakTimerRemaining = (breakElapsed < breakDuration) ? (breakDuration - breakElapsed) : 0;
     }
 }
 
 void Timer::resume() {
     if (state == PAUSED) {
         state = RUNNING;
-        // Restart timers from remaining time
         unsigned long now = millis();
-
-        // Calculate elapsed time (what has already passed)
         unsigned long mainElapsed = gameDuration - mainTimerRemaining;
-        unsigned long breakElapsed = breakDuration - breakTimerRemaining;
 
-        // Set start times accounting for potential overflow
-        // If now - elapsed would underflow, we need to handle it
         if (now >= mainElapsed) {
             mainTimerStart = now - mainElapsed;
         } else {
-            // Overflow case: now is small (wrapped), elapsed is large
             mainTimerStart = (0xFFFFFFFF - mainElapsed) + now + 1;
-        }
-
-        if (now >= breakElapsed) {
-            breakTimerStart = now - breakElapsed;
-        } else {
-            // Overflow case
-            breakTimerStart = (0xFFFFFFFF - breakElapsed) + now + 1;
         }
     }
 }
@@ -123,12 +86,8 @@ void Timer::reset() {
     state = IDLE;
     currentRound = 1;
     mainTimerRemaining = 0;
-    breakTimerRemaining = 0;
-    breakSirenSounded = false;
-}
-
-bool Timer::hasBreakEnded() {
-    return breakEnded;
+    pauseAfterNext = false;
+    continuousMode = false;
 }
 
 bool Timer::hasRoundEnded() {
@@ -140,11 +99,9 @@ bool Timer::isMatchFinished() {
 }
 
 unsigned long Timer::calculateElapsed(unsigned long start, unsigned long now) {
-    // Handle millis() overflow (occurs after ~49 days)
     if (now >= start) {
         return now - start;
     } else {
-        // Overflow occurred
         return (0xFFFFFFFF - start) + now + 1;
     }
 }
