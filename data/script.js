@@ -76,6 +76,9 @@ let isClientTimerPaused = false;
 let animationFrameId = null;
 let lastFrameTime = 0;
 
+// Client-side clock — ticks locally between server syncs
+let serverTimeOffset = 0;  // Difference: serverTime - clientTime (ms)
+
 // Reconnection
 let reconnectAttempts = 0;
 const MAX_RECONNECT_ATTEMPTS = 10;
@@ -324,12 +327,48 @@ function updateConnectionStatus(connected) {
     }
 }
 
+// Client-side clock: tick every second using offset from server time
+function parseServerTime(timeStr) {
+    // Parse "hh:mm:ss am/pm" format
+    const match = timeStr.match(/^(\d{1,2}):(\d{2}):(\d{2})\s*(am|pm)$/i);
+    if (!match) return null;
+    let h = parseInt(match[1]);
+    const m = parseInt(match[2]);
+    const s = parseInt(match[3]);
+    const ampm = match[4].toLowerCase();
+    if (ampm === 'am' && h === 12) h = 0;
+    if (ampm === 'pm' && h !== 12) h += 12;
+    // Create a Date with today's date and the server's time
+    const now = new Date();
+    return new Date(now.getFullYear(), now.getMonth(), now.getDate(), h, m, s);
+}
+
+function formatClock(date) {
+    let h = date.getHours();
+    const m = String(date.getMinutes()).padStart(2, '0');
+    const s = String(date.getSeconds()).padStart(2, '0');
+    const ampm = h >= 12 ? 'pm' : 'am';
+    h = h % 12 || 12;
+    return `${String(h).padStart(2, '0')}:${m}:${s} ${ampm}`;
+}
+
+setInterval(() => {
+    if (serverTimeOffset && timeElement) {
+        const serverNow = new Date(Date.now() + serverTimeOffset);
+        timeElement.textContent = formatClock(serverNow);
+    }
+}, 1000);
+
 function updateNTPStatus(data) {
     if (!ntpStatusElement) return;
     if (data.synced) {
         ntpStatusElement.className = 'ntp-status ntp-synced';
         ntpStatusElement.textContent = '\u2713';
         if (data.time && timeElement) {
+            const serverDate = parseServerTime(data.time);
+            if (serverDate) {
+                serverTimeOffset = serverDate.getTime() - Date.now();
+            }
             timeElement.textContent = data.time;
         }
         let tooltip = 'Time synced via NTP';
@@ -1030,7 +1069,10 @@ function connectWebSocket() {
                 if (data.state.continuousMode !== undefined) continuousMode = data.state.continuousMode;
                 roundCounterElement.textContent = formatRoundCounter(data.state.currentRound || 1, data.state.numRounds || 3);
                 enableDisplay.className = (data.state.status === 'RUNNING' || data.state.status === 'PAUSED') ? 'status-active' : 'status-idle';
-                timeElement.textContent = data.state.time || '--:--:--';
+                if (data.state.time) {
+                    const serverDate = parseServerTime(data.state.time);
+                    if (serverDate) serverTimeOffset = serverDate.getTime() - Date.now();
+                }
                 updatePauseAfterNextVisibility();
                 if (data.state.pauseAfterNext !== undefined) updatePauseAfterNextUI(data.state.pauseAfterNext);
                 if (data.state.activeEventEndTime !== undefined) updateEventWindowDisplay(data.state.activeEventName, data.state.activeEventEndTime);

@@ -170,6 +170,6 @@ constexpr bool ENABLE_MDNS = true;                               // Enable mDNS 
 // Version Information
 // =============================================================================
 
-constexpr const char* FIRMWARE_VERSION = "3.0.0";
+constexpr const char* FIRMWARE_VERSION = "3.1.0";
 constexpr const char* BUILD_DATE = __DATE__;
 constexpr const char* BUILD_TIME = __TIME__;
