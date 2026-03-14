@@ -276,6 +276,21 @@ function updateUIForRole() {
     updatePauseAfterNextVisibility();
 }
 
+function updatePauseBtnLabel(paused) {
+    if (!pauseBtn) return;
+    const span = pauseBtn.querySelector('span');
+    const svg = pauseBtn.querySelector('svg');
+    if (paused) {
+        if (span) span.textContent = 'Unpause';
+        // Play icon (triangle)
+        if (svg) svg.innerHTML = '<polygon points="5 3 19 12 5 21"></polygon>';
+    } else {
+        if (span) span.textContent = 'Pause';
+        // Pause icon (two bars)
+        if (svg) svg.innerHTML = '<rect x="6" y="4" width="4" height="16"></rect><rect x="14" y="4" width="4" height="16"></rect>';
+    }
+}
+
 function updatePauseAfterNextVisibility() {
     if (!pauseAfterNextBtn) return;
     // Show only for operator+ when timer is RUNNING
@@ -989,6 +1004,7 @@ function connectWebSocket() {
                 displayEndTime = serverEndTime; // Snap on fresh start
                 isClientTimerPaused = false;
                 currentTimerStatus = 'RUNNING';
+                updatePauseBtnLabel(false);
                 startClientTimer();
                 if (data.continuousMode !== undefined) continuousMode = data.continuousMode;
                 roundCounterElement.textContent = formatRoundCounter(data.currentRound, data.numRounds);
@@ -1004,6 +1020,7 @@ function connectWebSocket() {
 
                 isClientTimerPaused = (data.status === 'PAUSED');
                 currentTimerStatus = data.status;
+                updatePauseBtnLabel(isClientTimerPaused);
 
                 if (!isClientTimerPaused && data.status === 'RUNNING') {
                     startClientTimer();
@@ -1026,13 +1043,29 @@ function connectWebSocket() {
                 isClientTimerPaused = true;
                 currentTimerStatus = 'PAUSED';
                 stopClientTimer();
-                mainTimerDisplay.textContent = formatTime(Math.max(0, displayEndTime - Date.now()));
+                if (data.mainTimerRemaining !== undefined) {
+                    serverEndTime = Date.now() + data.mainTimerRemaining;
+                    displayEndTime = serverEndTime;
+                    mainTimerDisplay.textContent = formatTime(data.mainTimerRemaining);
+                } else {
+                    mainTimerDisplay.textContent = formatTime(Math.max(0, displayEndTime - Date.now()));
+                }
+                if (data.currentRound !== undefined) {
+                    roundCounterElement.textContent = formatRoundCounter(data.currentRound, data.numRounds);
+                }
+                updatePauseBtnLabel(true);
+                updatePauseAfterNextUI(false);
                 updatePauseAfterNextVisibility();
                 break;
 
             case 'resume':
                 isClientTimerPaused = false;
                 currentTimerStatus = 'RUNNING';
+                if (data.mainTimerRemaining !== undefined) {
+                    serverEndTime = Date.now() + data.mainTimerRemaining;
+                    displayEndTime = serverEndTime;
+                }
+                updatePauseBtnLabel(false);
                 startClientTimer();
                 updatePauseAfterNextVisibility();
                 break;
@@ -1044,6 +1077,7 @@ function connectWebSocket() {
                 displayEndTime = 0;
                 currentTimerStatus = 'IDLE';
                 continuousMode = false;
+                updatePauseBtnLabel(false);
                 mainTimerDisplay.textContent = formatTime(0);
                 enableDisplay.className = 'status-idle';
                 updatePauseAfterNextUI(false);

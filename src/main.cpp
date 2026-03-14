@@ -582,19 +582,32 @@ void loop() {
                 sendEvent("finished");
                 DEBUG_PRINTLN("Match completed! All rounds finished.");
             } else {
-                // Round ended — siren fires before pause takes effect
+                // Round ended — siren fires
                 if (sirenAllowed()) siren.start(2);
 
-                StaticJsonDocument<256> roundDoc;
-                roundDoc["event"] = "new_round";
-                roundDoc["gameDuration"] = timer.getGameDuration();
-                roundDoc["currentRound"] = timer.getCurrentRound();
-                roundDoc["numRounds"] = timer.getNumRounds();
-                roundDoc["pauseAfterNext"] = timer.getPauseAfterNext();
-                roundDoc["continuousMode"] = timer.getContinuousMode();
-                String output;
-                serializeJson(roundDoc, output);
-                ws.textAll(output);
+                if (timer.getState() == PAUSED) {
+                    // pauseAfterNext triggered — tell clients we're paused
+                    StaticJsonDocument<256> pauseDoc;
+                    pauseDoc["event"] = "pause";
+                    pauseDoc["mainTimerRemaining"] = timer.getMainTimerRemaining();
+                    pauseDoc["currentRound"] = timer.getCurrentRound();
+                    pauseDoc["numRounds"] = timer.getNumRounds();
+                    String output;
+                    serializeJson(pauseDoc, output);
+                    ws.textAll(output);
+                } else {
+                    // Normal next round
+                    StaticJsonDocument<256> roundDoc;
+                    roundDoc["event"] = "new_round";
+                    roundDoc["gameDuration"] = timer.getGameDuration();
+                    roundDoc["currentRound"] = timer.getCurrentRound();
+                    roundDoc["numRounds"] = timer.getNumRounds();
+                    roundDoc["pauseAfterNext"] = timer.getPauseAfterNext();
+                    roundDoc["continuousMode"] = timer.getContinuousMode();
+                    String output;
+                    serializeJson(roundDoc, output);
+                    ws.textAll(output);
+                }
             }
             sendStateUpdate();
         }
@@ -1006,10 +1019,20 @@ void handleWebSocketMessage(void *arg, uint8_t *data, size_t len, AsyncWebSocket
     } else if (action == "pause") {
         if (timer.getState() == RUNNING) {
             timer.pause();
-            sendEvent("pause");
+            StaticJsonDocument<256> pauseDoc;
+            pauseDoc["event"] = "pause";
+            pauseDoc["mainTimerRemaining"] = timer.getMainTimerRemaining();
+            String pauseOut;
+            serializeJson(pauseDoc, pauseOut);
+            ws.textAll(pauseOut);
         } else if (timer.getState() == PAUSED) {
             timer.resume();
-            sendEvent("resume");
+            StaticJsonDocument<256> resumeDoc;
+            resumeDoc["event"] = "resume";
+            resumeDoc["mainTimerRemaining"] = timer.getMainTimerRemaining();
+            String resumeOut;
+            serializeJson(resumeDoc, resumeOut);
+            ws.textAll(resumeOut);
         }
     } else if (action == "reset") {
         timer.reset();

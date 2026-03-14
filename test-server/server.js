@@ -376,11 +376,11 @@ function handleMessage(clientId, ws, msg) {
             if (client.role === 'viewer') { sendError(ws, 'Permission denied'); return; }
             if (timerStatus === 'RUNNING') {
                 timerStatus = 'PAUSED';
-                broadcast({ event: 'pause' });
+                broadcast({ event: 'pause', mainTimerRemaining: mainTimerRemaining });
                 console.log('⏸️  Timer paused');
             } else if (timerStatus === 'PAUSED') {
                 timerStatus = 'RUNNING';
-                broadcast({ event: 'resume' });
+                broadcast({ event: 'resume', mainTimerRemaining: mainTimerRemaining });
                 console.log('▶️  Timer resumed');
             }
             break;
@@ -637,7 +637,7 @@ setInterval(() => {
                 mainTimerRemaining = settings.gameDuration;
                 timerStatus = 'PAUSED';
                 pauseAfterNext = false;
-                broadcast({ event: 'pause' });
+                broadcast({ event: 'pause', mainTimerRemaining: mainTimerRemaining });
                 broadcast(buildSyncMessage());
                 console.log(`⏸️  Paused after round — now round ${currentRound}`);
             } else {
