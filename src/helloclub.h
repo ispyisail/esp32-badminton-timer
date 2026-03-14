@@ -79,8 +79,9 @@ private:
 
     const String baseUrl = "https://api.helloclub.com";
 
-    // Make HTTP request with retry
-    bool makeRequest(const String& endpoint, const String& params, DynamicJsonDocument& responseDoc);
+    // Make HTTP request with retry and JSON filter
+    bool makeRequest(const String& endpoint, const String& params,
+                     DynamicJsonDocument& responseDoc, const JsonDocument& filter);
 
     // Parse timer: tag from event description
     // Returns true if timer: tag found; sets duration and rounds

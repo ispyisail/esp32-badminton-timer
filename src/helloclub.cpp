@@ -74,7 +74,8 @@ void HelloClubClient::setDefaults(uint16_t defaultDuration, uint8_t defaultRound
     defaultNumRounds = defaultRounds;
 }
 
-bool HelloClubClient::makeRequest(const String& endpoint, const String& params, DynamicJsonDocument& responseDoc) {
+bool HelloClubClient::makeRequest(const String& endpoint, const String& params,
+                                   DynamicJsonDocument& responseDoc, const JsonDocument& filter) {
     if (apiKey.isEmpty()) {
         lastError = "API key not configured";
         return false;
@@ -89,7 +90,7 @@ bool HelloClubClient::makeRequest(const String& endpoint, const String& params, 
     }
 
     for (int attempt = 0; attempt < MAX_RETRIES; attempt++) {
-        DEBUG_PRINTF("HelloClub API Request (attempt %d/%d): %s\n", attempt + 1, MAX_RETRIES, url.c_str());
+        DEBUG_PRINTF("HelloClub API (attempt %d/%d): %s\n", attempt + 1, MAX_RETRIES, url.c_str());
 
         WiFiClientSecure client;
         client.setCACert(rootCACertificate);
@@ -106,7 +107,6 @@ bool HelloClubClient::makeRequest(const String& endpoint, const String& params, 
         }
 
         http.addHeader("X-Api-Key", apiKey);
-        http.addHeader("Content-Type", "application/json");
         http.addHeader("Accept", "application/json");
         http.setTimeout(10000);
 
@@ -114,24 +114,24 @@ bool HelloClubClient::makeRequest(const String& endpoint, const String& params, 
 
         if (httpCode == HTTP_CODE_OK) {
             int contentLen = http.getSize();
-            DEBUG_PRINTF("HelloClub API: Response size: %d bytes, free heap: %d\n", contentLen, ESP.getFreeHeap());
+            DEBUG_PRINTF("HelloClub API: %d bytes, heap: %d\n", contentLen, ESP.getFreeHeap());
 
-            // Read full payload into String, then free HTTP connection before parsing
+            // Read payload, then free SSL connection before parsing
             String payload = http.getString();
-            http.end();  // Free SSL buffers (~16KB) before JSON parsing
+            http.end();
             client.stop();
-            DEBUG_PRINTF("HelloClub API: Payload %d bytes, heap after free: %d\n", payload.length(), ESP.getFreeHeap());
 
-            DeserializationError error = deserializeJson(responseDoc, payload);
+            // Parse with filter — only keeps specified fields, dramatically reduces memory
+            DeserializationError error = deserializeJson(responseDoc, payload,
+                DeserializationOption::Filter(filter));
             if (error) {
                 lastError = "JSON parse error: " + String(error.c_str()) +
-                    " (payload " + payload.length() + " bytes, heap " + ESP.getFreeHeap() + ")";
+                    " (" + payload.length() + "B payload, " + ESP.getFreeHeap() + "B heap)";
                 return false;
             }
 
-            // Free payload string now that JSON is parsed
-            payload = String();
-            DEBUG_PRINTF("HelloClub API: Success on attempt %d, heap: %d\n", attempt + 1, ESP.getFreeHeap());
+            payload = String();  // Free payload
+            DEBUG_PRINTF("HelloClub API: OK, heap: %d\n", ESP.getFreeHeap());
             return true;
         }
 
@@ -280,106 +280,121 @@ bool HelloClubClient::fetchAndCacheEvents(int daysAhead, Timezone& tz) {
     char toDate[30];
     strftime(toDate, sizeof(toDate), "%Y-%m-%dT%H:%M:%SZ", &timeinfo);
 
-    String params = "fromDate=" + String(fromDate);
-    params += "&toDate=" + String(toDate);
-    params += "&sort=startDate";
-    params += "&limit=10";
+    lastSyncDebug = String("Query: ") + fromDate + " to " + toDate + "\n";
 
-    lastSyncDebug = String("Query: fromDate=") + fromDate + " toDate=" + toDate + "\n";
+    // JSON filter — only keep the fields we need (saves ~90% memory)
+    StaticJsonDocument<256> filter;
+    filter["events"][0]["id"] = true;
+    filter["events"][0]["name"] = true;
+    filter["events"][0]["description"] = true;
+    filter["events"][0]["startDate"] = true;
+    filter["events"][0]["endDate"] = true;
 
-    DynamicJsonDocument responseDoc(49152);  // 48KB — HC API can return large responses
-    if (!makeRequest("/event", params, responseDoc)) {
-        lastSyncDebug += "Request failed: " + lastError + "\n";
-        return false;
-    }
-
-    // Try both response formats: {"events": [...]} or top-level array
-    JsonArray eventsArray;
-    if (responseDoc.containsKey("events")) {
-        eventsArray = responseDoc["events"].as<JsonArray>();
-    } else if (responseDoc.is<JsonArray>()) {
-        eventsArray = responseDoc.as<JsonArray>();
-        lastSyncDebug += "Response is top-level array\n";
-    }
-
-    if (eventsArray.isNull()) {
-        // Capture raw response keys for debugging
-        lastSyncDebug += "Response keys: ";
-        JsonObject root = responseDoc.as<JsonObject>();
-        for (JsonPair kv : root) {
-            lastSyncDebug += String(kv.key().c_str()) + " ";
-        }
-        lastSyncDebug += "\n";
-        lastError = "No events array in response";
-        return false;
-    }
-
-    totalEventsFromApi = eventsArray.size();
-    lastSyncDebug += String("API returned ") + totalEventsFromApi + " events\n";
-    DEBUG_PRINTF("HelloClub: Found %d events from API\n", totalEventsFromApi);
-
-    // Build new event list, keeping triggered state from existing cache
+    // Paginate: fetch PAGE_SIZE events at a time to stay within ESP32 RAM
+    const int PAGE_SIZE = 5;
+    totalEventsFromApi = 0;
     std::vector<CachedEvent> newEvents;
 
-    for (JsonObject eventObj : eventsArray) {
-        // Get description to check for timer: tag
-        String description = "";
-        if (eventObj.containsKey("description")) {
-            description = eventObj["description"].as<String>();
-        }
+    for (int offset = 0; offset < 100; offset += PAGE_SIZE) {  // Safety cap at 100
+        String params = "fromDate=" + String(fromDate);
+        params += "&toDate=" + String(toDate);
+        params += "&sort=startDate";
+        params += "&limit=" + String(PAGE_SIZE);
+        params += "&offset=" + String(offset);
 
-        String name = eventObj["name"] | "unnamed";
-        DEBUG_PRINTF("  Event: '%s' desc(%d chars): '%.80s'\n",
-                     name.c_str(), description.length(), description.c_str());
-
-        // Capture debug info (first 3 events only to save memory)
-        if (lastSyncDebug.length() < 800) {
-            lastSyncDebug += name + " | desc=" + description.substring(0, 100) + "\n";
-        }
-
-        uint16_t duration;
-        uint8_t rounds;
-        if (!parseTimerTag(description, duration, rounds)) {
-            DEBUG_PRINTF("    -> no timer: tag, skipping\n");
-            continue; // Skip events without timer: tag
-        }
-
-        if (newEvents.size() >= HC_MAX_EVENTS) {
+        // Small doc — filter strips everything except our 5 fields
+        DynamicJsonDocument responseDoc(8192);
+        if (!makeRequest("/event", params, responseDoc, filter)) {
+            if (offset == 0) {
+                // First page failed — report error
+                lastSyncDebug += "Page 1 failed: " + lastError + "\n";
+                return false;
+            }
+            // Later pages failing is OK — we got some events
+            DEBUG_PRINTF("HelloClub: Page at offset %d failed, stopping pagination\n", offset);
             break;
         }
 
-        CachedEvent evt;
-        String fullId = eventObj["id"].as<String>();
-        evt.id = fullId.substring(0, 12);
-        evt.name = eventObj["name"].as<String>();
-        if (evt.name.length() > 40) {
-            evt.name = evt.name.substring(0, 40);
+        // Try both response formats: {"events": [...]} or top-level array
+        JsonArray eventsArray;
+        if (responseDoc.containsKey("events")) {
+            eventsArray = responseDoc["events"].as<JsonArray>();
+        } else if (responseDoc.is<JsonArray>()) {
+            eventsArray = responseDoc.as<JsonArray>();
         }
 
-        evt.startTime = parseISOToEpoch(eventObj["startDate"].as<String>());
-        evt.endTime = parseISOToEpoch(eventObj["endDate"].as<String>());
-        evt.durationMin = duration;
-        evt.numRounds = rounds;
+        if (eventsArray.isNull() || eventsArray.size() == 0) {
+            DEBUG_PRINTF("HelloClub: No more events at offset %d\n", offset);
+            break;  // No more events
+        }
 
-        // Preserve triggered state from existing cache
-        evt.triggered = false;
-        for (const auto& existing : events) {
-            if (existing.id == evt.id) {
-                evt.triggered = existing.triggered;
+        int pageCount = eventsArray.size();
+        totalEventsFromApi += pageCount;
+        DEBUG_PRINTF("HelloClub: Page offset=%d returned %d events\n", offset, pageCount);
+
+        for (JsonObject eventObj : eventsArray) {
+            String description = eventObj["description"] | "";
+            String name = eventObj["name"] | "unnamed";
+
+            // Capture debug info
+            if (lastSyncDebug.length() < 600) {
+                lastSyncDebug += name.substring(0, 30) + " | " +
+                    (description.length() > 0 ? description.substring(0, 50) : "(no desc)") + "\n";
+            }
+
+            uint16_t duration;
+            uint8_t rounds;
+            if (!parseTimerTag(description, duration, rounds)) {
+                continue; // Skip events without timer: tag
+            }
+
+            if (newEvents.size() >= HC_MAX_EVENTS) {
                 break;
             }
+
+            CachedEvent evt;
+            String fullId = eventObj["id"] | "";
+            evt.id = fullId.substring(0, 12);
+            evt.name = name.substring(0, 40);
+            evt.startTime = parseISOToEpoch(eventObj["startDate"] | "");
+            evt.endTime = parseISOToEpoch(eventObj["endDate"] | "");
+            evt.durationMin = duration;
+            evt.numRounds = rounds;
+
+            // Preserve triggered state from existing cache
+            evt.triggered = false;
+            for (const auto& existing : events) {
+                if (existing.id == evt.id) {
+                    evt.triggered = existing.triggered;
+                    break;
+                }
+            }
+
+            newEvents.push_back(evt);
+            DEBUG_PRINTF("  Cached: %s %dmin %drounds\n",
+                         evt.name.c_str(), evt.durationMin, evt.numRounds);
         }
 
-        newEvents.push_back(evt);
-        DEBUG_PRINTF("  Cached: %s (%s) %dmin %drounds\n",
-                     evt.name.c_str(), evt.id.c_str(), evt.durationMin, evt.numRounds);
+        // If we got fewer than PAGE_SIZE, that's the last page
+        if (pageCount < PAGE_SIZE) {
+            break;
+        }
+
+        // Don't exceed max cached events
+        if (newEvents.size() >= HC_MAX_EVENTS) {
+            break;
+        }
     }
+
+    lastSyncDebug += String("Total: ") + totalEventsFromApi + " events, " +
+        newEvents.size() + " with timer: tag\n";
 
     events = newEvents;
     lastSyncTime = millis();
     saveToNVS();
 
-    DEBUG_PRINTF("HelloClub: Cached %d events with timer: tag\n", events.size());
+    DEBUG_PRINTF("HelloClub: Cached %d events with timer: tag (from %d total)\n",
+                 events.size(), totalEventsFromApi);
     return true;
 }
 
