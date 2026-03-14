@@ -92,7 +92,7 @@ let continuousMode = false;
 
 // Sound
 let soundEnabled = true;
-const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+let audioContext = null;
 
 // Button debounce
 let buttonsEnabled = true;
@@ -108,6 +108,9 @@ function escapeHtml(text) {
 
 function playBeep(frequency = 440, duration = 100) {
     if (!soundEnabled) return;
+    if (!audioContext) {
+        audioContext = new (window.AudioContext || window.webkitAudioContext)();
+    }
     const oscillator = audioContext.createOscillator();
     const gainNode = audioContext.createGain();
     oscillator.connect(gainNode);
@@ -502,17 +505,21 @@ function renderOperatorsList(operators) {
         html += `
             <div class="operator-item">
                 <span class="operator-username">${safeUsername}</span>
-                <button class="btn btn-danger btn-small" onclick="removeOperator('${safeUsername}')">Remove</button>
+                <button class="btn btn-danger btn-small" data-username="${safeUsername}">Remove</button>
             </div>
         `;
     });
     operatorsList.innerHTML = html;
-}
 
-function removeOperator(username) {
-    if (confirm(`Remove operator "${username}"?`)) {
-        sendWebSocketMessage({ action: 'remove_operator', username: username });
-    }
+    // Attach event listeners via delegation (avoids XSS from onclick attributes)
+    operatorsList.querySelectorAll('button[data-username]').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const username = btn.dataset.username;
+            if (confirm(`Remove operator "${username}"?`)) {
+                sendWebSocketMessage({ action: 'remove_operator', username: username });
+            }
+        });
+    });
 }
 
 // --- Event Listeners ---
@@ -792,16 +799,38 @@ function connectWebSocket() {
                 break;
 
             case 'auth_success':
+            case 'viewer_mode':
                 userRole = data.role || 'viewer';
                 currentUsername = data.username || 'Viewer';
                 loginModal.classList.add('hidden');
                 updateUIForRole();
-                showTemporaryMessage(`Welcome, ${escapeHtml(currentUsername)}!`, "success");
+                if (data.event === 'auth_success') {
+                    showTemporaryMessage(`Welcome, ${escapeHtml(currentUsername)}!`, "success");
+                }
+                break;
+
+            case 'login_prompt':
+                // Server greeting on connect — show login modal
+                loginModal.classList.remove('hidden');
+                break;
+
+            case 'session_timeout':
+                userRole = 'viewer';
+                currentUsername = 'Viewer';
+                updateUIForRole();
+                loginModal.classList.remove('hidden');
+                showTemporaryMessage(data.message || "Session expired", "error");
                 break;
 
             case 'auth_failed':
                 showTemporaryMessage(data.message || "Authentication failed", "error");
                 loginModal.classList.remove('hidden');
+                break;
+
+            case 'pause_after_next_changed':
+                if (typeof data.pauseAfterNext !== 'undefined') {
+                    updatePauseAfterNextUI(data.pauseAfterNext);
+                }
                 break;
 
             case 'operators_list':
@@ -1011,7 +1040,6 @@ function connectWebSocket() {
 }
 
 // --- Global handlers for onclick ---
-window.removeOperator = removeOperator;
 window.showSettingsPage = showSettingsPage;
 window.showUserManagementPage = showUserManagementPage;
 window.showHelpPage = showHelpPage;

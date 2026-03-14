@@ -974,7 +974,9 @@ void handleWebSocketMessage(void *arg, uint8_t *data, size_t len, AsyncWebSocket
                              action == "change_password" || action == "factory_reset" ||
                              action == "get_operators" || action == "set_timezone" ||
                              action == "save_helloclub_settings" || action == "helloclub_refresh" ||
-                             action == "save_qr_settings");
+                             action == "save_qr_settings" ||
+                             action == "get_helloclub_settings" ||
+                             action == "get_qr_config");
     if (needsAdmin && clientRole < ADMIN) {
         sendError(client, "Admin access required");
         return;
@@ -995,6 +997,8 @@ void handleWebSocketMessage(void *arg, uint8_t *data, size_t len, AsyncWebSocket
             startDoc["gameDuration"] = timer.getGameDuration();
             startDoc["numRounds"] = timer.getNumRounds();
             startDoc["currentRound"] = timer.getCurrentRound();
+            startDoc["continuousMode"] = timer.getContinuousMode();
+            startDoc["pauseAfterNext"] = timer.getPauseAfterNext();
             String output;
             serializeJson(startDoc, output);
             ws.textAll(output);
@@ -1027,12 +1031,13 @@ void handleWebSocketMessage(void *arg, uint8_t *data, size_t len, AsyncWebSocket
     } else if (action == "save_settings") {
         JsonObject settingsObj = doc["settings"];
 
-        unsigned long gameDur = settingsObj["gameDuration"].as<unsigned long>();
+        unsigned long gameDurMs = settingsObj["gameDuration"].as<unsigned long>();  // Client sends milliseconds
         unsigned int rounds = settingsObj["numRounds"].as<unsigned int>();
         unsigned long sirenLen = settingsObj["sirenLength"].as<unsigned long>();
         unsigned long sirenPau = settingsObj["sirenPause"].as<unsigned long>();
 
-        if (gameDur < 1 || gameDur > 120) {
+        unsigned long gameDurMin = gameDurMs / 60000;  // Convert to minutes for validation
+        if (gameDurMin < 1 || gameDurMin > 120) {
             sendError(client, "Game duration must be between 1 and 120 minutes");
             return;
         }
@@ -1049,7 +1054,7 @@ void handleWebSocketMessage(void *arg, uint8_t *data, size_t len, AsyncWebSocket
             return;
         }
 
-        timer.setGameDuration(gameDur * 60000);
+        timer.setGameDuration(gameDurMs);
         timer.setNumRounds(rounds);
         siren.setBlastLength(sirenLen);
         siren.setBlastPause(sirenPau);
@@ -1171,11 +1176,7 @@ void handleWebSocketMessage(void *arg, uint8_t *data, size_t len, AsyncWebSocket
         sendUpcomingEvents(client);
 
     } else if (action == "get_helloclub_settings") {
-        if (clientRole != ADMIN) {
-            sendError(client, "Admin access required");
-            return;
-        }
-
+        // Permission already checked in needsAdmin block above
         StaticJsonDocument<512> settingsDoc;
         settingsDoc["event"] = "helloclub_settings";
         settingsDoc["apiKey"] = helloClubApiKey.isEmpty() ? "" : "***configured***";
@@ -1279,8 +1280,6 @@ void handleWebSocketMessage(void *arg, uint8_t *data, size_t len, AsyncWebSocket
             sendError(client, "Failed to save QR settings");
         }
     }
-
-    sendStateUpdate();
 }
 
 

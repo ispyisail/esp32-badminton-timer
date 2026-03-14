@@ -81,8 +81,8 @@ bool HelloClubClient::makeRequest(const String& endpoint, const String& params,
         return false;
     }
 
-    const int MAX_RETRIES = 3;
-    const int RETRY_DELAYS[] = {1000, 2000, 4000};
+    const int MAX_RETRIES = 2;          // Reduced to minimize blocking time
+    const int RETRY_DELAYS[] = {500, 1000};  // Short delays to avoid freezing main loop
 
     String url = baseUrl + endpoint;
     if (!params.isEmpty()) {

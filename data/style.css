@@ -92,32 +92,44 @@ body::before {
 .header {
     background: linear-gradient(135deg, var(--primary-color) 0%, var(--primary-dark) 100%);
     color: white;
-    padding: 20px;
+    padding: 15px 20px;
     display: flex;
-    justify-content: space-between;
+    flex-direction: column;
     align-items: center;
-    gap: 15px;
+    gap: 8px;
 }
 
 .header-title {
-    flex: 1;
     text-align: center;
 }
 
 .header-title h1 {
     font-size: 1.5em;
     font-weight: 700;
-    margin: 0 0 5px 0;
+    margin: 0;
     letter-spacing: -0.02em;
+}
+
+.header-bar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    width: 100%;
 }
 
 .connection-badge {
     display: flex;
     align-items: center;
-    justify-content: center;
     gap: 6px;
     font-size: 0.75em;
     opacity: 0.9;
+    min-width: 90px;
+}
+
+.header-icons {
+    display: flex;
+    gap: 12px;
+    align-items: center;
 }
 
 .clock-display {
@@ -685,16 +697,6 @@ body::before {
 }
 
 @media (max-width: 380px) {
-    .header {
-        flex-wrap: wrap;
-    }
-
-    .header-title {
-        order: -1;
-        width: 100%;
-        margin-bottom: 10px;
-    }
-
     .clock-display {
         font-size: 0.8em;
     }
@@ -702,13 +704,10 @@ body::before {
     .main-timer {
         font-size: 3em;
     }
-}
 
-/* --- Header Left Grouping --- */
-.header-left {
-    display: flex;
-    gap: 10px;
-    align-items: center;
+    .header-title h1 {
+        font-size: 1.2em;
+    }
 }
 
 /* --- Modal Styles --- */
@@ -894,18 +893,18 @@ body::before {
 }
 
 body.role-viewer .viewer-only {
-    display: block;
+    display: revert;
 }
 
 body.role-operator .operator-only,
 body.role-operator .viewer-only {
-    display: block;
+    display: revert;
 }
 
 body.role-admin .admin-only,
 body.role-admin .operator-only,
 body.role-admin .viewer-only {
-    display: block;
+    display: revert;
 }
 
 body.role-viewer .controls button {
