@@ -54,6 +54,12 @@ public:
     // Get last error
     String getLastError() const { return lastError; }
 
+    // Get total events from last API response (before timer: tag filtering)
+    int getTotalEventsFromApi() const { return totalEventsFromApi; }
+
+    // Get debug info from last sync (event names + descriptions for troubleshooting)
+    String getLastSyncDebug() const { return lastSyncDebug; }
+
     // Check if API key is configured
     bool isConfigured() const { return !apiKey.isEmpty(); }
 
@@ -63,6 +69,8 @@ private:
     unsigned long lastSyncTime;
     uint16_t defaultDurationMin;
     uint8_t defaultNumRounds;
+    int totalEventsFromApi = 0;
+    String lastSyncDebug;
     std::vector<CachedEvent> events;
 
     static const int HC_MAX_EVENTS = 20;

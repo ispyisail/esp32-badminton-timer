@@ -1217,21 +1217,25 @@ void handleWebSocketMessage(void *arg, uint8_t *data, size_t len, AsyncWebSocket
             lastHelloClubPoll = millis();
             lastHelloClubPollFailed = false;
 
-            StaticJsonDocument<256> successDoc;
+            DynamicJsonDocument successDoc(2048);
             successDoc["event"] = "helloclub_refresh_result";
             successDoc["success"] = true;
-            successDoc["message"] = "Sync completed";
+            successDoc["message"] = String("Synced: ") + helloClubClient.getCachedEvents().size() +
+                " with timer: tag out of " + helloClubClient.getTotalEventsFromApi() + " total events";
             successDoc["eventCount"] = helloClubClient.getCachedEvents().size();
+            successDoc["totalEvents"] = helloClubClient.getTotalEventsFromApi();
+            successDoc["debug"] = helloClubClient.getLastSyncDebug();
             String output;
             serializeJson(successDoc, output);
             client->text(output);
 
             sendUpcomingEvents(); // Broadcast to all
         } else {
-            StaticJsonDocument<256> failDoc;
+            DynamicJsonDocument failDoc(2048);
             failDoc["event"] = "helloclub_refresh_result";
             failDoc["success"] = false;
             failDoc["message"] = helloClubClient.getLastError();
+            failDoc["debug"] = helloClubClient.getLastSyncDebug();
             String output;
             serializeJson(failDoc, output);
             client->text(output);

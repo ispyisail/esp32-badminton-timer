@@ -873,9 +873,11 @@ function connectWebSocket() {
 
             case 'helloclub_refresh_result':
                 if (data.success) {
-                    showTemporaryMessage(`Synced ${data.eventCount || 0} events from Hello Club`, "success");
+                    showTemporaryMessage(data.message || `Synced ${data.eventCount || 0} events from Hello Club`, "success");
+                    if (data.debug) console.log("HC Sync Debug:\n" + data.debug);
                 } else {
                     showTemporaryMessage(data.message || data.error || 'Hello Club sync failed', "error");
+                    if (data.debug) console.log("HC Sync Debug:\n" + data.debug);
                 }
                 break;
 

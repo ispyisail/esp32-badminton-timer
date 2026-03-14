@@ -113,16 +113,25 @@ bool HelloClubClient::makeRequest(const String& endpoint, const String& params, 
         int httpCode = http.GET();
 
         if (httpCode == HTTP_CODE_OK) {
+            int contentLen = http.getSize();
+            DEBUG_PRINTF("HelloClub API: Response size: %d bytes, free heap: %d\n", contentLen, ESP.getFreeHeap());
+
+            // Read full payload into String, then free HTTP connection before parsing
             String payload = http.getString();
-            http.end();
+            http.end();  // Free SSL buffers (~16KB) before JSON parsing
+            client.stop();
+            DEBUG_PRINTF("HelloClub API: Payload %d bytes, heap after free: %d\n", payload.length(), ESP.getFreeHeap());
 
             DeserializationError error = deserializeJson(responseDoc, payload);
             if (error) {
-                lastError = "JSON parse error: " + String(error.c_str());
+                lastError = "JSON parse error: " + String(error.c_str()) +
+                    " (payload " + payload.length() + " bytes, heap " + ESP.getFreeHeap() + ")";
                 return false;
             }
 
-            DEBUG_PRINTF("HelloClub API: Success on attempt %d\n", attempt + 1);
+            // Free payload string now that JSON is parsed
+            payload = String();
+            DEBUG_PRINTF("HelloClub API: Success on attempt %d, heap: %d\n", attempt + 1, ESP.getFreeHeap());
             return true;
         }
 
@@ -253,8 +262,12 @@ time_t HelloClubClient::parseISOToEpoch(const String& isoDate) {
 bool HelloClubClient::fetchAndCacheEvents(int daysAhead, Timezone& tz) {
     lastError = "";
 
-    // Calculate date range
-    time_t now = time(nullptr);
+    // Calculate date range using ezTime (C time(nullptr) may not be NTP-synced)
+    time_t now = UTC.now();
+    if (now < 1000000000) { // Before ~2001 = NTP not synced
+        lastError = "NTP time not synced yet";
+        return false;
+    }
     struct tm timeinfo;
     gmtime_r(&now, &timeinfo);
 
@@ -270,20 +283,40 @@ bool HelloClubClient::fetchAndCacheEvents(int daysAhead, Timezone& tz) {
     String params = "fromDate=" + String(fromDate);
     params += "&toDate=" + String(toDate);
     params += "&sort=startDate";
-    params += "&limit=50";
+    params += "&limit=10";
 
-    DynamicJsonDocument responseDoc(16384);
+    lastSyncDebug = String("Query: fromDate=") + fromDate + " toDate=" + toDate + "\n";
+
+    DynamicJsonDocument responseDoc(49152);  // 48KB — HC API can return large responses
     if (!makeRequest("/event", params, responseDoc)) {
+        lastSyncDebug += "Request failed: " + lastError + "\n";
         return false;
     }
 
-    JsonArray eventsArray = responseDoc["events"].as<JsonArray>();
+    // Try both response formats: {"events": [...]} or top-level array
+    JsonArray eventsArray;
+    if (responseDoc.containsKey("events")) {
+        eventsArray = responseDoc["events"].as<JsonArray>();
+    } else if (responseDoc.is<JsonArray>()) {
+        eventsArray = responseDoc.as<JsonArray>();
+        lastSyncDebug += "Response is top-level array\n";
+    }
+
     if (eventsArray.isNull()) {
+        // Capture raw response keys for debugging
+        lastSyncDebug += "Response keys: ";
+        JsonObject root = responseDoc.as<JsonObject>();
+        for (JsonPair kv : root) {
+            lastSyncDebug += String(kv.key().c_str()) + " ";
+        }
+        lastSyncDebug += "\n";
         lastError = "No events array in response";
         return false;
     }
 
-    DEBUG_PRINTF("HelloClub: Found %d events from API\n", eventsArray.size());
+    totalEventsFromApi = eventsArray.size();
+    lastSyncDebug += String("API returned ") + totalEventsFromApi + " events\n";
+    DEBUG_PRINTF("HelloClub: Found %d events from API\n", totalEventsFromApi);
 
     // Build new event list, keeping triggered state from existing cache
     std::vector<CachedEvent> newEvents;
@@ -295,9 +328,19 @@ bool HelloClubClient::fetchAndCacheEvents(int daysAhead, Timezone& tz) {
             description = eventObj["description"].as<String>();
         }
 
+        String name = eventObj["name"] | "unnamed";
+        DEBUG_PRINTF("  Event: '%s' desc(%d chars): '%.80s'\n",
+                     name.c_str(), description.length(), description.c_str());
+
+        // Capture debug info (first 3 events only to save memory)
+        if (lastSyncDebug.length() < 800) {
+            lastSyncDebug += name + " | desc=" + description.substring(0, 100) + "\n";
+        }
+
         uint16_t duration;
         uint8_t rounds;
         if (!parseTimerTag(description, duration, rounds)) {
+            DEBUG_PRINTF("    -> no timer: tag, skipping\n");
             continue; // Skip events without timer: tag
         }
 
@@ -401,7 +444,7 @@ void HelloClubClient::saveToNVS() {
 }
 
 CachedEvent* HelloClubClient::checkAutoTrigger(Timezone& tz) {
-    time_t now = time(nullptr);
+    time_t now = UTC.now();
 
     for (auto& evt : events) {
         if (evt.triggered) continue;
@@ -427,7 +470,7 @@ void HelloClubClient::markTriggered(const String& id) {
 }
 
 void HelloClubClient::purgeExpired(Timezone& tz) {
-    time_t now = time(nullptr);
+    time_t now = UTC.now();
     size_t before = events.size();
 
     events.erase(
