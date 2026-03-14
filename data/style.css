@@ -100,7 +100,10 @@ body::before {
 }
 
 .header-title {
-    text-align: center;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    width: 100%;
 }
 
 .header-title h1 {
@@ -120,10 +123,10 @@ body::before {
 .connection-badge {
     display: flex;
     align-items: center;
+    justify-content: center;
     gap: 6px;
     font-size: 0.75em;
     opacity: 0.9;
-    min-width: 90px;
 }
 
 .header-icons {
@@ -141,7 +144,7 @@ body::before {
     background: rgba(255, 255, 255, 0.1);
     padding: 8px 12px;
     border-radius: var(--border-radius-sm);
-    width: 155px;
+    width: 185px;
     flex-shrink: 0;
 }
 
