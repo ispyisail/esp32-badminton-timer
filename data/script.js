@@ -252,6 +252,10 @@ function showUserManagementPage(show) {
     userManagementPage.classList.toggle('hidden', !show);
     if (helpPage) helpPage.classList.add('hidden');
     if (qrPage) qrPage.classList.add('hidden');
+    if (show) {
+        const heading = document.getElementById('change-password-heading');
+        if (heading) heading.textContent = `Change Password (${currentUsername})`;
+    }
 }
 
 function showHelpPage(show) {
@@ -272,6 +276,11 @@ function updateUIForRole() {
             <strong>${escapeHtml(currentUsername)}</strong>
             <span class="badge badge-${userRole}">${roleDisplay}</span>
         `;
+    }
+    const loginLogoutBtn = document.getElementById('main-login-logout-btn');
+    if (loginLogoutBtn) {
+        const span = loginLogoutBtn.querySelector('span');
+        if (span) span.textContent = (userRole === 'viewer') ? 'Login' : 'Logout';
     }
     updatePauseAfterNextVisibility();
 }
@@ -579,7 +588,13 @@ function renderOperatorsList(operators) {
 // --- Event Listeners ---
 
 function initializeEventListeners() {
-    settingsIcon.addEventListener('click', () => showSettingsPage(true));
+    settingsIcon.addEventListener('click', () => {
+        if (userRole !== 'admin') {
+            showTemporaryMessage('Admin access required for settings', 'error');
+            return;
+        }
+        showSettingsPage(true);
+    });
     saveSettingsBtn.addEventListener('click', validateAndSaveAllSettings);
 
     gameDurationInput.addEventListener('change', sendSettings);
@@ -623,6 +638,7 @@ function initializeEventListeners() {
             currentUsername = 'Viewer';
             loginModal.classList.add('hidden');
             updateUIForRole();
+            showTemporaryMessage('Tap the user icon to log in later', 'success');
         });
     }
 
@@ -636,11 +652,14 @@ function initializeEventListeners() {
 
     if (userIcon) {
         userIcon.addEventListener('click', () => {
-            if (userRole === 'admin') {
-                showUserManagementPage(true);
-                loadOperators();
+            if (userRole === 'viewer') {
+                // Not logged in — show login modal
+                loginModal.classList.remove('hidden');
+                if (loginUsernameInput) loginUsernameInput.value = '';
+                if (loginPasswordInput) loginPasswordInput.value = '';
             } else {
-                showTemporaryMessage('Admin access required', 'error');
+                showUserManagementPage(true);
+                if (userRole === 'admin') loadOperators();
             }
         });
     }
@@ -648,6 +667,8 @@ function initializeEventListeners() {
     if (closeUserManagementBtn) {
         closeUserManagementBtn.addEventListener('click', () => showUserManagementPage(false));
     }
+
+    // Logout handled via onclick="handleLogout()" in HTML
 
     if (addOperatorBtn) {
         addOperatorBtn.addEventListener('click', () => {
@@ -1119,6 +1140,17 @@ function connectWebSocket() {
 window.showSettingsPage = showSettingsPage;
 window.showUserManagementPage = showUserManagementPage;
 window.showHelpPage = showHelpPage;
+window.handleLoginLogout = function() {
+    userRole = 'viewer';
+    currentUsername = 'Viewer';
+    updateUIForRole();
+    showUserManagementPage(false);
+    if (loginModal) {
+        loginModal.classList.remove('hidden');
+        if (loginUsernameInput) loginUsernameInput.value = '';
+        if (loginPasswordInput) loginPasswordInput.value = '';
+    }
+};
 
 // --- Init ---
 if (!SIMULATION_MODE) {

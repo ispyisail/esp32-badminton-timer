@@ -926,7 +926,8 @@ body.role-viewer .controls button {
     pointer-events: none;
 }
 
-body.role-viewer .quick-settings input {
+body.role-viewer .quick-settings input,
+body.role-operator .quick-settings input {
     pointer-events: none;
 }
 
@@ -949,6 +950,11 @@ select.full-width-input {
     padding: 20px;
     background: white;
     border-top: 1px solid #e5e7eb;
+}
+
+.main-logout {
+    padding: 15px 20px;
+    text-align: center;
 }
 
 .upcoming-events-header {

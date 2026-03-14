@@ -384,9 +384,11 @@ button:hover{background:#c73e54}
     Serial.printf("Timezone configured: %s\n", configuredTimezone.c_str());
 
     server.on("/", HTTP_GET, [](AsyncWebServerRequest *request) {
-        request->send(SPIFFS, "/index.html", "text/html");
+        AsyncWebServerResponse *response = request->beginResponse(SPIFFS, "/index.html", "text/html");
+        response->addHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+        request->send(response);
     });
-    server.serveStatic("/", SPIFFS, "/");
+    server.serveStatic("/", SPIFFS, "/").setCacheControl("no-cache");
 
     ws.onEvent(onWsEvent);
     server.addHandler(&ws);
@@ -977,7 +979,8 @@ void handleWebSocketMessage(void *arg, uint8_t *data, size_t len, AsyncWebSocket
 
     // Permission checks
     const bool needsOperator = (action == "start" || action == "pause" || action == "reset" ||
-                                action == "save_settings" || action == "pause_after_next");
+                                action == "pause_after_next" ||
+                                action == "helloclub_refresh");
     if (needsOperator && clientRole < OPERATOR) {
         sendError(client, "Operator access required");
         return;
@@ -986,10 +989,10 @@ void handleWebSocketMessage(void *arg, uint8_t *data, size_t len, AsyncWebSocket
     const bool needsAdmin = (action == "add_operator" || action == "remove_operator" ||
                              action == "change_password" || action == "factory_reset" ||
                              action == "get_operators" || action == "set_timezone" ||
-                             action == "save_helloclub_settings" || action == "helloclub_refresh" ||
+                             action == "save_settings" ||
+                             action == "save_helloclub_settings" ||
                              action == "save_qr_settings" ||
-                             action == "get_helloclub_settings" ||
-                             action == "get_qr_config");
+                             action == "get_helloclub_settings");
     if (needsAdmin && clientRole < ADMIN) {
         sendError(client, "Admin access required");
         return;
@@ -1116,7 +1119,17 @@ void handleWebSocketMessage(void *arg, uint8_t *data, size_t len, AsyncWebSocket
         String username = doc["username"] | "";
         String password = doc["password"] | "";
 
-        if (userManager.addOperator(username, password)) {
+        if (username.length() == 0) {
+            sendError(client, "Username cannot be empty");
+        } else if (password.length() == 0) {
+            sendError(client, "Password cannot be empty");
+        } else if (password.length() < MIN_PASSWORD_LENGTH) {
+            char msg[64];
+            snprintf(msg, sizeof(msg), "Password must be at least %d characters", MIN_PASSWORD_LENGTH);
+            sendError(client, msg);
+        } else if (userManager.usernameExists(username)) {
+            sendError(client, "Username already exists");
+        } else if (userManager.addOperator(username, password)) {
             StaticJsonDocument<256> successDoc;
             successDoc["event"] = "operator_added";
             successDoc["username"] = username;
@@ -1124,7 +1137,7 @@ void handleWebSocketMessage(void *arg, uint8_t *data, size_t len, AsyncWebSocket
             serializeJson(successDoc, output);
             client->text(output);
         } else {
-            sendError(client, "Failed to add operator. Check username/password.");
+            sendError(client, "Maximum number of operators reached");
         }
     } else if (action == "remove_operator") {
         String username = doc["username"] | "";

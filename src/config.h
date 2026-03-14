@@ -121,7 +121,7 @@ constexpr int MAX_MESSAGES_PER_SECOND = 10;                      // Max messages
 // =============================================================================
 
 // Password requirements
-constexpr int MIN_PASSWORD_LENGTH = 8;                           // Minimum password length (increased for security)
+constexpr int MIN_PASSWORD_LENGTH = 5;                           // Minimum password length
 
 // =============================================================================
 // Hello Club API Configuration
