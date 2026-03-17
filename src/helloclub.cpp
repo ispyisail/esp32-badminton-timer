@@ -2,6 +2,8 @@
 #include "config.h"
 #include <WiFiClientSecure.h>
 #include <time.h>
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 
 // Root CA Certificates — Google Trust Services Root R4 + Let's Encrypt ISRG Root X1
 // Multiple roots for resilience against CA changes
@@ -100,7 +102,7 @@ bool HelloClubClient::makeRequest(const String& endpoint, const String& params,
         if (!http.begin(client, url)) {
             lastError = "Failed to begin HTTP request";
             if (attempt < MAX_RETRIES - 1) {
-                delay(RETRY_DELAYS[attempt]);
+                vTaskDelay(pdMS_TO_TICKS(RETRY_DELAYS[attempt]));
                 continue;
             }
             return false;
@@ -108,7 +110,7 @@ bool HelloClubClient::makeRequest(const String& endpoint, const String& params,
 
         http.addHeader("X-Api-Key", apiKey);
         http.addHeader("Accept", "application/json");
-        http.setTimeout(10000);
+        http.setTimeout(5000);
 
         int httpCode = http.GET();
 
@@ -153,7 +155,7 @@ bool HelloClubClient::makeRequest(const String& endpoint, const String& params,
         }
 
         DEBUG_PRINTF("HelloClub API: Retrying in %dms...\n", RETRY_DELAYS[attempt]);
-        delay(RETRY_DELAYS[attempt]);
+        vTaskDelay(pdMS_TO_TICKS(RETRY_DELAYS[attempt]));
     }
 
     return false;
@@ -287,7 +289,11 @@ bool HelloClubClient::fetchAndCacheEvents(int daysAhead, Timezone& tz) {
     char toDate[30];
     strftime(toDate, sizeof(toDate), "%Y-%m-%dT%H:%M:%SZ", &timeinfo);
 
-    lastSyncDebug = String("Query: ") + fromDate + " to " + toDate + "\n";
+    lastSyncDebug = "";
+    lastSyncDebug.reserve(512);
+    char syncBuf[128];
+    snprintf(syncBuf, sizeof(syncBuf), "Query: %s to %s\n", fromDate, toDate);
+    lastSyncDebug += syncBuf;
 
     // JSON filter — only keep the fields we need (saves ~90% memory)
     StaticJsonDocument<256> filter;
@@ -343,10 +349,13 @@ bool HelloClubClient::fetchAndCacheEvents(int daysAhead, Timezone& tz) {
             String description = eventObj["description"] | "";
             String name = eventObj["name"] | "unnamed";
 
-            // Capture debug info
-            if (lastSyncDebug.length() < 600) {
-                lastSyncDebug += name.substring(0, 30) + " | " +
-                    (description.length() > 0 ? description.substring(0, 50) : "(no desc)") + "\n";
+            // Capture debug info using fixed buffer to avoid String fragmentation
+            if (lastSyncDebug.length() < 400) {
+                char debugLine[96];
+                snprintf(debugLine, sizeof(debugLine), "%.30s | %.50s\n",
+                    name.c_str(),
+                    description.length() > 0 ? description.c_str() : "(no desc)");
+                lastSyncDebug += debugLine;
             }
 
             uint16_t duration;
@@ -393,8 +402,10 @@ bool HelloClubClient::fetchAndCacheEvents(int daysAhead, Timezone& tz) {
         }
     }
 
-    lastSyncDebug += String("Total: ") + totalEventsFromApi + " events, " +
-        newEvents.size() + " with timer: tag\n";
+    char summaryBuf[80];
+    snprintf(summaryBuf, sizeof(summaryBuf), "Total: %d events, %d with timer: tag\n",
+        totalEventsFromApi, (int)newEvents.size());
+    lastSyncDebug += summaryBuf;
 
     events = newEvents;
     lastSyncTime = millis();

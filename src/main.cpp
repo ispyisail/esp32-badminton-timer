@@ -302,6 +302,7 @@ button:hover{background:#c73e54}
         unsigned long portalStart = millis();
         while (!portalDone && millis() - portalStart < 300000) {
             dns.processNextRequest();
+            esp_task_wdt_reset();
             delay(10);
         }
 
@@ -320,6 +321,7 @@ button:hover{background:#c73e54}
 
             unsigned long start = millis();
             while (WiFi.status() != WL_CONNECTED && millis() - start < 15000) {
+                esp_task_wdt_reset();
                 delay(500);
                 Serial.print(".");
             }
@@ -478,6 +480,19 @@ void loop() {
         }
     }
 
+    // Heap monitoring — log every 5 minutes, warn if low
+    static unsigned long lastHeapLog = 0;
+    if (millis() - lastHeapLog >= 300000) {
+        lastHeapLog = millis();
+        uint32_t freeHeap = ESP.getFreeHeap();
+        uint32_t minFreeHeap = ESP.getMinFreeHeap();
+        DEBUG_PRINTF("Heap: %u free, %u min free (since boot)\n", freeHeap, minFreeHeap);
+        if (freeHeap < 10240) {
+            DEBUG_PRINTLN("WARNING: Free heap below 10KB!");
+            bootLog("HEAP WARNING: %u bytes free", freeHeap);
+        }
+    }
+
     events(); // ezTime
     ArduinoOTA.handle();
     ws.cleanupClients();
@@ -499,8 +514,27 @@ void loop() {
             }
         }
 
+        // Also check if we already recovered this event (prevents reboot→recover→crash loops)
+        String lastRecoveredId = "";
+        {
+            Preferences recPrefs;
+            if (recPrefs.begin("helloclub", true)) {
+                lastRecoveredId = recPrefs.getString("last_recov", "");
+                recPrefs.end();
+            }
+        }
+
         RecoveryResult recovery = helloClubClient.checkMidEventRecovery();
-        if (recovery.shouldRecover && recovery.eventId != cancelledId) {
+        if (recovery.shouldRecover && recovery.eventId != cancelledId && recovery.eventId != lastRecoveredId) {
+            // Persist this event ID immediately so if we crash during recovery, we won't retry
+            {
+                Preferences recPrefs;
+                if (recPrefs.begin("helloclub", false)) {
+                    recPrefs.putString("last_recov", recovery.eventId);
+                    recPrefs.end();
+                }
+            }
+
             DEBUG_PRINTF("Boot recovery: %s round %u, %lu ms remaining\n",
                          recovery.eventName.c_str(), recovery.currentRound, recovery.remainingMs);
 
@@ -531,6 +565,9 @@ void loop() {
 
             sendStateUpdate();
             bootLog("Boot recovery: resumed %s round %u", recovery.eventName.c_str(), recovery.currentRound);
+        } else if (recovery.shouldRecover && recovery.eventId == lastRecoveredId) {
+            DEBUG_PRINTF("Boot recovery: skipped %s (already recovered, preventing loop)\n", recovery.eventId.c_str());
+            bootLog("Boot recovery: skipped %s (already recovered)", recovery.eventId.c_str());
         } else if (recovery.shouldRecover) {
             DEBUG_PRINTF("Boot recovery: skipped %s (manually cancelled)\n", recovery.eventId.c_str());
             bootLog("Boot recovery: skipped %s (cancelled)", recovery.eventId.c_str());
@@ -736,6 +773,7 @@ bool connectToKnownWiFi() {
 
         unsigned long startAttemptTime = millis();
         while (WiFi.status() != WL_CONNECTED && millis() - startAttemptTime < 15000) {
+            esp_task_wdt_reset();
             delay(500);
             Serial.print(".");
         }
@@ -1423,6 +1461,8 @@ void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventTyp
         case WS_EVT_CONNECT: {
             Serial.printf("WebSocket client #%u connected from %s\n", client->id(), client->remoteIP().toString().c_str());
             authenticatedClients[client->id()] = VIEWER;
+            clientRateLimits[client->id()] = {millis(), 0};
+            clientLastActivity[client->id()] = millis();
             StaticJsonDocument<256> loginDoc;
             loginDoc["event"] = "login_prompt";
             loginDoc["message"] = "Welcome! Login for full access or continue as viewer.";
@@ -1473,12 +1513,25 @@ void setupOTA() {
       else
         type = "filesystem";
       DEBUG_PRINTLN("Start updating " + type);
+
+      // Stop siren and pause timer before flashing to prevent siren stuck on
+      siren.stop();
+      if (timer.getState() == RUNNING) {
+          timer.pause();
+      }
+
+      if (ENABLE_WATCHDOG) {
+          esp_task_wdt_reset();
+      }
     })
     .onEnd([]() {
       DEBUG_PRINTLN("\nOTA Update complete");
     })
     .onProgress([](unsigned int progress, unsigned int total) {
       DEBUG_PRINTF("Progress: %u%%\r", (progress / (total / 100)));
+      if (ENABLE_WATCHDOG) {
+          esp_task_wdt_reset();
+      }
     })
     .onError([](ota_error_t error) {
       DEBUG_PRINTF("Error[%u]: ", error);

@@ -135,7 +135,7 @@ constexpr int HELLOCLUB_MAX_CACHED_EVENTS = 20;                  // Max cached e
 constexpr unsigned long HELLOCLUB_TRIGGER_WINDOW_MS = 120000;    // 2 minute trigger window
 
 // API retry settings
-constexpr int HELLOCLUB_REQUEST_TIMEOUT_MS = 10000;              // 10 second timeout
+constexpr int HELLOCLUB_REQUEST_TIMEOUT_MS = 5000;               // 5 second timeout (reduced for faster failure)
 
 // =============================================================================
 // Debug Configuration
