@@ -5,9 +5,54 @@ All notable changes to the ESP32 Badminton Timer project will be documented in t
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.1.0] - 2026-03-18
+
+### Added
+
+#### Hello Club Integration
+- **Hello Club API integration** - event fetching, caching, and auto-trigger
+- **Timer tag parsing** from event descriptions (format: `timer: duration:rounds`)
+- **Mid-event boot recovery** - resumes timer after reboot during active event
+- **Non-blocking HTTP fetch** for Hello Club API
+- **Event cutoff enforcement** - hard stop when booking ends
+- **Continuous mode** - rounds repeat until event cutoff
+- **HTTPS certificate validation** using Let's Encrypt root CA
+
+#### Security
+- **SHA-256 password hashing** with automatic migration from plaintext
+- **XSS protection** - HTML escaping for user content
+
+#### UI/UX
+- **QR code WiFi configuration** for guest access
+- **Configurable timezone** - 20 common timezones available
+- **Pause After Next round** - one-shot flag to pause after current round completes
+
+#### Developer/System
+- **Boot logger** - persists boot info to SPIFFS
+- **startMidRound()** function for boot recovery
+
+### Changed
+- Minimum password length changed to 5 characters
+- Default game duration set to 12 minutes
+- Schedule check interval reduced from 60s to 30s
+- `save_settings` now requires ADMIN role (was OPERATOR)
+- `DynamicJsonDocument` used for large payloads (prevents stack overflow)
+- `operators_list` returns flat string array
+
+### Fixed
+- Timer pause/resume overflow handling (`millis()` wraparound after 49 days)
+- Clock ticking and display stability
+- Pause/resume timer logic
+- Pause Next round logic
+- Connected badge positioning and UI layout
+- Permission checks for logout and QR access
+- Cache busting for web assets
+
+---
+
 ## [3.0.0] - 2025-10-30
 
-### 🎉 Major Release: Multi-Club Scheduling & Authentication
+### Major Release: Multi-Club Scheduling & Authentication
 
 This is a major release adding comprehensive authentication, automated scheduling, and user management systems.
 
@@ -50,7 +95,7 @@ This is a major release adding comprehensive authentication, automated schedulin
 - **NVS persistence** for operator credentials
 
 #### Time Synchronization
-- **NTP sync status indicator** - ✓ (synced), ⏳ (syncing), ✗ (error)
+- **NTP sync status indicator** - checkmark (synced), hourglass (syncing), cross (error)
 - **Visual feedback** - green/amber/red with pulsing animation
 - **Robust validation** - year (2020-2100), month (1-12), day (1-31)
 - **Status broadcasting** - updates every 5 seconds, only on status change
@@ -80,7 +125,7 @@ This is a major release adding comprehensive authentication, automated schedulin
 - **Nested schedule data** - `{ action: "add_schedule", schedule: {...} }` format
 - **Error codes with ERR_ prefix** - standardized error messages
 - **Server-side username tracking** - `authenticatedUsernames` map for ownership
-- **Increased buffer size** - 2KB → 8KB for schedules (handles 50 schedules)
+- **Increased buffer size** - 2KB to 8KB for schedules (handles 50 schedules)
 - **Permission checking** - all control actions verify role before execution
 - **Owner enforcement** - server sets `ownerUsername`, never accepts from client
 
@@ -106,7 +151,7 @@ This is a major release adding comprehensive authentication, automated schedulin
 - **Memory cleanup** - `lastTriggerTimes` cleaned up on schedule delete
 - **Larger JSON buffer** - prevents overflow with many schedules
 - **Improved ID generation** - collision detection with retry mechanism
-- **Week wraparound handling** - proper modulo arithmetic for Sunday→Monday transition
+- **Week wraparound handling** - proper modulo arithmetic for Sunday to Monday transition
 
 ### Fixed
 
@@ -120,7 +165,7 @@ This is a major release adding comprehensive authentication, automated schedulin
 5. **Memory leak on schedule delete** - clean up `lastTriggerTimes` map entry
 6. **Buffer overflow with many schedules** - increased from 2KB to 8KB
 7. **Schedule ID collisions** - improved generation with counter + collision detection
-8. **Week rollover bug** - fixed Saturday→Sunday schedule triggering with proper modulo
+8. **Week rollover bug** - fixed Saturday to Sunday schedule triggering with proper modulo
 
 #### Medium-Priority Bugs (Severity: MEDIUM)
 9. **No rate limiting** - added 10 messages/second per client limit
@@ -167,7 +212,7 @@ This is a major release adding comprehensive authentication, automated schedulin
 - **Lines Added**: ~8,000+
 - **Bugs Fixed**: 16 (4 critical, 4 high, 4 medium, 4 low)
 - **Code Reviews**: 2 comprehensive reviews
-- **Documentation Pages**: 7 (README, ARCHITECTURE, API, USER_GUIDE, INSTALL, 2 × CODE_REVIEW, CHANGELOG)
+- **Documentation Pages**: 7 (README, ARCHITECTURE, API, USER_GUIDE, INSTALL, 2 x CODE_REVIEW, CHANGELOG)
 
 ---
 
@@ -194,7 +239,7 @@ This is a major release adding comprehensive authentication, automated schedulin
 - **Temporary notifications** - fade-in/fade-out banners for user feedback
 
 ### Changed
-- **Timer precision** - improved to ±10ms (server-side)
+- **Timer precision** - improved to +/-10ms (server-side)
 - **Client-side countdown** - local interpolation between sync messages
 - **WebSocket message structure** - standardized JSON format
 - **Settings validation** - server-side range checking
@@ -249,6 +294,24 @@ This project follows [Semantic Versioning](https://semver.org/):
 
 ## Upgrade Notes
 
+### From v3.0 to v3.1
+
+**New Features Available:**
+- Hello Club API integration for automatic event-based timer triggers
+- Mid-event boot recovery ensures timer resumes after unexpected reboots
+- QR code for easy WiFi guest access
+- Configurable timezone selection (20 options)
+- SHA-256 password hashing (automatic migration from plaintext on login)
+- Continuous mode for events that repeat rounds until the booking ends
+
+**Migration Steps:**
+1. Upload new firmware (v3.1)
+2. Upload new filesystem (updated web files)
+3. Existing settings, users, and schedules are preserved
+4. Plaintext passwords will be automatically hashed on next login
+5. Configure Hello Club settings if desired (Admin > Settings)
+6. Set preferred timezone (Admin > Settings)
+
 ### From v2.0 to v3.0
 
 **Breaking Changes:**
@@ -300,6 +363,12 @@ This project follows [Semantic Versioning](https://semver.org/):
 
 ## Known Issues
 
+### v3.1.0
+
+1. Hello Club API requires valid HTTPS endpoint and API key configuration
+2. Boot recovery depends on accurate NTP time sync after reboot
+3. QR code generation requires sufficient free heap memory
+
 ### v3.0.0
 
 **Minor (LOW severity, optional fixes):**
@@ -316,10 +385,9 @@ See CODE_REVIEW_ROUND_2.md for full details.
 
 ---
 
-## Future Roadmap (v4.0)
+## Future Roadmap
 
 **Under Consideration:**
-- HTTPS support with self-signed certificates
 - Multi-court support (multiple independent timers)
 - Statistics tracking (usage per club, total matches played)
 - Email/SMS notifications for schedule reminders
@@ -347,6 +415,5 @@ For bug reports, feature requests, or questions:
 
 ---
 
-**Changelog Maintained By:** Claude Code
 **Project:** ESP32 Badminton Timer
 **License:** MIT
