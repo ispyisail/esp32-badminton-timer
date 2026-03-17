@@ -16,6 +16,7 @@ public:
 
     bool update();
     void start();
+    void startMidRound(unsigned int round, unsigned long remainingMs);
     void pause();
     void resume();
     void reset();

@@ -189,12 +189,17 @@ bool HelloClubClient::parseTimerTag(const String& description, uint16_t& duratio
     duration = defaultDurationMin;
     rounds = 0; // 0 = continuous by default
 
+    // Work with lowercased value (not the full description 'lower')
+    // to keep indices consistent after trim/truncation
+    String lowerValue = value;
+    lowerValue.toLowerCase();
+
     // Parse Xmin
-    int minPos = lower.indexOf("min", tagPos + 6);
-    if (minPos > tagPos + 6) {
+    int minPos = lowerValue.indexOf("min");
+    if (minPos > 0) {
         String numStr = "";
-        for (int i = minPos - 1; i >= tagPos + 6; i--) {
-            char c = value.charAt(i - (tagPos + 6));
+        for (int i = minPos - 1; i >= 0; i--) {
+            char c = lowerValue.charAt(i);
             if (c >= '0' && c <= '9') {
                 numStr = String(c) + numStr;
             } else {
@@ -210,11 +215,11 @@ bool HelloClubClient::parseTimerTag(const String& description, uint16_t& duratio
     }
 
     // Parse Xrounds (optional — if omitted, continuous mode)
-    int roundPos = lower.indexOf("round", tagPos + 6);
-    if (roundPos > tagPos + 6) {
+    int roundPos = lowerValue.indexOf("round");
+    if (roundPos > 0) {
         String numStr = "";
-        for (int i = roundPos - 1; i >= tagPos + 6; i--) {
-            char c = value.charAt(i - (tagPos + 6));
+        for (int i = roundPos - 1; i >= 0; i--) {
+            char c = lowerValue.charAt(i);
             if (c >= '0' && c <= '9') {
                 numStr = String(c) + numStr;
             } else {
@@ -237,26 +242,28 @@ time_t HelloClubClient::parseISOToEpoch(const String& isoDate) {
         return 0;
     }
 
-    struct tm tm;
-    memset(&tm, 0, sizeof(tm));
-    tm.tm_year = isoDate.substring(0, 4).toInt() - 1900;
-    tm.tm_mon = isoDate.substring(5, 7).toInt() - 1;
-    tm.tm_mday = isoDate.substring(8, 10).toInt();
-    tm.tm_hour = isoDate.substring(11, 13).toInt();
-    tm.tm_min = isoDate.substring(14, 16).toInt();
-    tm.tm_sec = isoDate.substring(17, 19).toInt();
+    int year = isoDate.substring(0, 4).toInt();
+    int mon  = isoDate.substring(5, 7).toInt();
+    int day  = isoDate.substring(8, 10).toInt();
+    int hour = isoDate.substring(11, 13).toInt();
+    int min  = isoDate.substring(14, 16).toInt();
+    int sec  = isoDate.substring(17, 19).toInt();
 
-    // mktime interprets as local time, but we want UTC
-    // Use timegm equivalent
-    time_t result = mktime(&tm);
-    // Adjust for local timezone offset to get UTC
-    struct tm utc_check;
-    gmtime_r(&result, &utc_check);
-    time_t utc_result = mktime(&utc_check);
-    time_t offset = utc_result - result;
-    result -= offset;
+    // Convert to UTC epoch without relying on mktime (which uses local TZ
+    // and gets DST wrong on ESP32). Algorithm: days since 1970-01-01.
+    // Months Jan=1..Dec=12; shift Mar=1 so leap day falls at year end.
+    int y = year;
+    int m = mon;
+    if (m <= 2) { y--; m += 12; }
+    m -= 3; // Mar=0 .. Feb=11
 
-    return result;
+    // Days from epoch to date (calibrated: 1970-01-01 = 0)
+    long days = 365L * (y - 1970)
+              + (y - 1968) / 4 - (y - 1900) / 100 + (y - 1600) / 400
+              + (153 * m + 2) / 5 + day - 1
+              + 59;
+
+    return (time_t)(days * 86400L + hour * 3600L + min * 60L + sec);
 }
 
 bool HelloClubClient::fetchAndCacheEvents(int daysAhead, Timezone& tz) {
@@ -456,6 +463,64 @@ void HelloClubClient::saveToNVS() {
         prefs.end();
         DEBUG_PRINTF("HelloClub: Saved %d events to NVS (%d bytes)\n", events.size(), json.length());
     }
+}
+
+RecoveryResult HelloClubClient::checkMidEventRecovery() {
+    RecoveryResult result;
+    result.shouldRecover = false;
+
+    time_t now = UTC.now();
+    if (now < 1000000000) {
+        return result; // NTP not synced
+    }
+
+    CachedEvent* bestEvent = nullptr;
+
+    for (auto& evt : events) {
+        // Must be inside the event time window
+        if (now < evt.startTime || now >= evt.endTime) {
+            continue;
+        }
+
+        time_t elapsed = now - evt.startTime;
+        unsigned long roundDurationSec = (unsigned long)evt.durationMin * 60;
+
+        // Non-continuous: check if all rounds are done
+        if (evt.numRounds > 0) {
+            unsigned long totalMatchSec = (unsigned long)evt.numRounds * roundDurationSec;
+            if ((unsigned long)elapsed >= totalMatchSec) {
+                continue; // All rounds finished
+            }
+        }
+
+        // Pick the event with the latest startTime (most relevant)
+        if (!bestEvent || evt.startTime > bestEvent->startTime) {
+            bestEvent = &evt;
+        }
+    }
+
+    if (!bestEvent) {
+        return result;
+    }
+
+    time_t elapsed = now - bestEvent->startTime;
+    unsigned long roundDurationSec = (unsigned long)bestEvent->durationMin * 60;
+    unsigned int currentRound = (unsigned int)(elapsed / roundDurationSec) + 1;
+    unsigned long remainingInRoundSec = roundDurationSec - (elapsed % roundDurationSec);
+
+    result.shouldRecover = true;
+    result.eventId = bestEvent->id;
+    result.eventName = bestEvent->name;
+    result.durationMin = bestEvent->durationMin;
+    result.numRounds = bestEvent->numRounds;
+    result.currentRound = currentRound;
+    result.remainingMs = remainingInRoundSec * 1000UL;
+    result.eventEndTime = bestEvent->endTime;
+
+    DEBUG_PRINTF("Recovery check: event '%s' round %d, %lu sec remaining\n",
+                 bestEvent->name.c_str(), currentRound, remainingInRoundSec);
+
+    return result;
 }
 
 CachedEvent* HelloClubClient::checkAutoTrigger(Timezone& tz) {

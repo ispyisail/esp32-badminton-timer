@@ -59,6 +59,23 @@ void Timer::start() {
     }
 }
 
+void Timer::startMidRound(unsigned int round, unsigned long remainingMs) {
+    state = RUNNING;
+    currentRound = round;
+    mainTimerRemaining = remainingMs;
+    pauseAfterNext = false;
+
+    // Back-calculate mainTimerStart so update() computes correct remaining
+    unsigned long elapsed = gameDuration - remainingMs;
+    unsigned long now = millis();
+    if (now >= elapsed) {
+        mainTimerStart = now - elapsed;
+    } else {
+        // Handle millis() wrap (same pattern as resume())
+        mainTimerStart = (0xFFFFFFFF - elapsed) + now + 1;
+    }
+}
+
 void Timer::pause() {
     if (state == RUNNING) {
         state = PAUSED;

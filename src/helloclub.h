@@ -18,6 +18,18 @@ struct CachedEvent {
     bool triggered;         // Already auto-started
 };
 
+// Result from mid-event boot recovery check
+struct RecoveryResult {
+    bool shouldRecover;
+    String eventId;
+    String eventName;
+    uint16_t durationMin;
+    uint8_t numRounds;          // 0 = continuous
+    unsigned int currentRound;
+    unsigned long remainingMs;  // milliseconds remaining in current round
+    time_t eventEndTime;
+};
+
 class HelloClubClient {
 public:
     HelloClubClient();
@@ -41,6 +53,9 @@ public:
 
     // Mark event as triggered and save
     void markTriggered(const String& id);
+
+    // Check if we're mid-event after a reboot — returns recovery info
+    RecoveryResult checkMidEventRecovery();
 
     // Purge expired events (endTime < now)
     void purgeExpired(Timezone& tz);

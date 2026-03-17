@@ -132,9 +132,19 @@ bool helloClubEnabled = false;
 unsigned long lastHelloClubPoll = 0;
 bool lastHelloClubPollFailed = false;
 
+// Background fetch task (FreeRTOS)
+volatile bool hcFetchInProgress = false;
+volatile bool hcFetchResultReady = false;
+volatile bool hcFetchResultSuccess = false;
+TaskHandle_t hcFetchTaskHandle = nullptr;
+
 // Event Window Enforcement
 time_t activeEventEndTime = 0;
 String activeEventName = "";
+String activeEventId = "";
+
+// Boot Recovery
+bool bootRecoveryAttempted = false;
 
 // ==========================================================================
 // --- Function Declarations ---
@@ -383,6 +393,10 @@ button:hover{background:#c73e54}
     myTZ.setLocation(configuredTimezone);
     Serial.printf("Timezone configured: %s\n", configuredTimezone.c_str());
 
+    // Throttle NTP polling — default ezTime polls every 30 min which can
+    // block the main loop during UDP round-trips. Set to 60 min.
+    setInterval(3600);
+
     server.on("/", HTTP_GET, [](AsyncWebServerRequest *request) {
         AsyncWebServerResponse *response = request->beginResponse(SPIFFS, "/index.html", "text/html");
         response->addHeader("Cache-Control", "no-cache, no-store, must-revalidate");
@@ -471,6 +485,58 @@ void loop() {
     checkAndBroadcastNTPStatus();
     siren.update();
 
+    // Boot recovery: if we rebooted mid-event, resume the timer
+    if (!bootRecoveryAttempted && helloClubEnabled && lastNTPSyncStatus) {
+        bootRecoveryAttempted = true;
+
+        // Check if operator manually cancelled before the reboot
+        String cancelledId = "";
+        {
+            Preferences cancelPrefs;
+            if (cancelPrefs.begin("helloclub", true)) {
+                cancelledId = cancelPrefs.getString("evt_cancel", "");
+                cancelPrefs.end();
+            }
+        }
+
+        RecoveryResult recovery = helloClubClient.checkMidEventRecovery();
+        if (recovery.shouldRecover && recovery.eventId != cancelledId) {
+            DEBUG_PRINTF("Boot recovery: %s round %u, %lu ms remaining\n",
+                         recovery.eventName.c_str(), recovery.currentRound, recovery.remainingMs);
+
+            timer.setGameDuration(recovery.durationMin * 60000UL);
+            if (recovery.numRounds > 0) {
+                timer.setNumRounds(recovery.numRounds);
+                timer.setContinuousMode(false);
+            } else {
+                timer.setContinuousMode(true);
+            }
+            timer.startMidRound(recovery.currentRound, recovery.remainingMs);
+
+            activeEventEndTime = recovery.eventEndTime;
+            activeEventName = recovery.eventName;
+            activeEventId = recovery.eventId;
+
+            // Broadcast recovery notification
+            StaticJsonDocument<512> recDoc;
+            recDoc["event"] = "event_auto_resumed";
+            recDoc["eventName"] = recovery.eventName;
+            recDoc["durationMin"] = recovery.durationMin;
+            recDoc["currentRound"] = recovery.currentRound;
+            recDoc["remainingMs"] = recovery.remainingMs;
+            recDoc["eventEndTime"] = (long)recovery.eventEndTime;
+            String output;
+            serializeJson(recDoc, output);
+            ws.textAll(output);
+
+            sendStateUpdate();
+            bootLog("Boot recovery: resumed %s round %u", recovery.eventName.c_str(), recovery.currentRound);
+        } else if (recovery.shouldRecover) {
+            DEBUG_PRINTF("Boot recovery: skipped %s (manually cancelled)\n", recovery.eventId.c_str());
+            bootLog("Boot recovery: skipped %s (cancelled)", recovery.eventId.c_str());
+        }
+    }
+
     // Session timeout check (every 60 seconds)
     static unsigned long lastSessionCheck = 0;
     if (millis() - lastSessionCheck >= 60000) {
@@ -535,6 +601,16 @@ void loop() {
                 // Set event window
                 activeEventEndTime = evt->endTime;
                 activeEventName = evt->name;
+                activeEventId = evt->id;
+
+                // Clear any stale cancel flag (new event starting)
+                {
+                    Preferences cancelPrefs;
+                    if (cancelPrefs.begin("helloclub", false)) {
+                        cancelPrefs.remove("evt_cancel");
+                        cancelPrefs.end();
+                    }
+                }
 
                 // Broadcast auto-start notification
                 StaticJsonDocument<512> startDoc;
@@ -555,7 +631,7 @@ void loop() {
     // Event window enforcement — hard cutoff
     if (activeEventEndTime > 0 &&
         (timer.getState() == RUNNING || timer.getState() == PAUSED)) {
-        time_t now = time(nullptr);
+        time_t now = UTC.now();
         if (now >= activeEventEndTime) {
             timer.reset();
             siren.stop();
@@ -571,6 +647,7 @@ void loop() {
             DEBUG_PRINTF("Event cutoff: %s\n", activeEventName.c_str());
             activeEventEndTime = 0;
             activeEventName = "";
+            activeEventId = "";
 
             sendStateUpdate();
         }
@@ -695,7 +772,7 @@ String getFormattedTime12Hour() {
 
 bool sirenAllowed() {
     if (activeEventEndTime == 0) return true;
-    time_t now = time(nullptr);
+    time_t now = UTC.now();
     return now < activeEventEndTime;
 }
 
@@ -1038,9 +1115,20 @@ void handleWebSocketMessage(void *arg, uint8_t *data, size_t len, AsyncWebSocket
             ws.textAll(resumeOut);
         }
     } else if (action == "reset") {
+        // If resetting during an active HC event, persist cancel flag
+        // so boot recovery won't re-trigger this event
+        if (!activeEventId.isEmpty()) {
+            Preferences cancelPrefs;
+            if (cancelPrefs.begin("helloclub", false)) {
+                cancelPrefs.putString("evt_cancel", activeEventId);
+                cancelPrefs.end();
+            }
+            DEBUG_PRINTF("Reset during event %s — cancel flag saved\n", activeEventId.c_str());
+        }
         timer.reset();
         activeEventEndTime = 0;
         activeEventName = "";
+        activeEventId = "";
         sendEvent("reset");
 
     } else if (action == "pause_after_next") {
@@ -1188,6 +1276,17 @@ void handleWebSocketMessage(void *arg, uint8_t *data, size_t len, AsyncWebSocket
         siren.setBlastPause(DEFAULT_SIREN_PAUSE);
         settings.save(timer, siren);
         timer.reset();
+        activeEventEndTime = 0;
+        activeEventName = "";
+        activeEventId = "";
+        // Clear cancel flag
+        {
+            Preferences cancelPrefs;
+            if (cancelPrefs.begin("helloclub", false)) {
+                cancelPrefs.remove("evt_cancel");
+                cancelPrefs.end();
+            }
+        }
 
         StaticJsonDocument<256> resetDoc;
         resetDoc["event"] = "factory_reset_complete";
@@ -1487,6 +1586,16 @@ void saveHelloClubSettings() {
     }
 }
 
+// FreeRTOS task: runs Hello Club HTTP fetch on a background core
+void hcFetchTask(void* param) {
+    bool success = helloClubClient.fetchAndCacheEvents(HELLOCLUB_DAYS_AHEAD, myTZ);
+    hcFetchResultSuccess = success;
+    hcFetchResultReady = true;
+    hcFetchInProgress = false;
+    hcFetchTaskHandle = nullptr;
+    vTaskDelete(nullptr); // Self-delete
+}
+
 void checkHelloClubPoll() {
     if (!helloClubEnabled || !helloClubClient.isConfigured()) {
         return;
@@ -1496,6 +1605,29 @@ void checkHelloClubPoll() {
         return; // Wait for NTP sync
     }
 
+    // Check if background fetch completed
+    if (hcFetchResultReady) {
+        hcFetchResultReady = false;
+        unsigned long now = millis();
+        lastHelloClubPoll = now;
+
+        if (hcFetchResultSuccess) {
+            lastHelloClubPollFailed = false;
+            DEBUG_PRINTLN("HelloClub: Background poll successful");
+            sendUpcomingEvents();
+        } else {
+            lastHelloClubPollFailed = true;
+            DEBUG_PRINTF("HelloClub: Background poll failed - %s (retry in 5min)\n",
+                         helloClubClient.getLastError().c_str());
+        }
+        return;
+    }
+
+    // Don't start a new fetch if one is already running
+    if (hcFetchInProgress) {
+        return;
+    }
+
     unsigned long now = millis();
     unsigned long interval = lastHelloClubPollFailed ? HELLOCLUB_RETRY_INTERVAL_MS : HELLOCLUB_POLL_INTERVAL_MS;
 
@@ -1503,17 +1635,18 @@ void checkHelloClubPoll() {
         return; // Not time yet
     }
 
-    DEBUG_PRINTLN("HelloClub: Starting hourly poll...");
+    DEBUG_PRINTLN("HelloClub: Starting background poll...");
+    hcFetchInProgress = true;
+    hcFetchResultReady = false;
 
-    if (helloClubClient.fetchAndCacheEvents(HELLOCLUB_DAYS_AHEAD, myTZ)) {
-        lastHelloClubPoll = now;
-        lastHelloClubPollFailed = false;
-        DEBUG_PRINTLN("HelloClub: Poll successful");
-
-        sendUpcomingEvents(); // Broadcast updated events to all clients
-    } else {
-        lastHelloClubPoll = now;
-        lastHelloClubPollFailed = true;
-        DEBUG_PRINTF("HelloClub: Poll failed - %s (retry in 5min)\n", helloClubClient.getLastError().c_str());
-    }
+    // Launch on core 0 (network core) — main loop runs on core 1
+    xTaskCreatePinnedToCore(
+        hcFetchTask,        // Task function
+        "hcFetch",          // Name
+        8192,               // Stack size (bytes) — SSL needs ~6KB
+        nullptr,            // Parameter
+        1,                  // Priority (low — don't starve WiFi)
+        &hcFetchTaskHandle, // Handle
+        0                   // Core 0 (protocol core)
+    );
 }

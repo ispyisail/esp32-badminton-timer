@@ -989,6 +989,10 @@ function connectWebSocket() {
                 showTemporaryMessage(`Auto-started: ${escapeHtml(data.eventName)}`, "success");
                 break;
 
+            case 'event_auto_resumed':
+                showTemporaryMessage(`Resumed after reboot: ${escapeHtml(data.eventName)} (round ${data.currentRound})`, "success");
+                break;
+
             case 'event_cutoff':
                 showTemporaryMessage(data.message || "Session ended - booking time expired", "error");
                 break;
@@ -1038,6 +1042,12 @@ function connectWebSocket() {
             case 'sync': {
                 // Update the target — the animation loop will smoothly converge
                 serverEndTime = Date.now() + data.mainTimerRemaining;
+
+                // Snap displayEndTime on first sync (fresh page load) so
+                // the animation loop starts with a valid remaining time
+                if (displayEndTime === 0) {
+                    displayEndTime = serverEndTime;
+                }
 
                 isClientTimerPaused = (data.status === 'PAUSED');
                 currentTimerStatus = data.status;

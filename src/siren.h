@@ -75,4 +75,7 @@ private:
     int blastsRemaining;
     unsigned long lastActionTime;
     bool relayOn;
+
+    // Safety: force relay off if on longer than this (defense against blocked loop)
+    static const unsigned long SAFETY_TIMEOUT_MS = 5000;
 };

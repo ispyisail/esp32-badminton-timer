@@ -1,0 +1,16 @@
+{
+  "name": "badminton-timer-tests",
+  "version": "1.0.0",
+  "description": "Test suite for ESP32 badminton timer",
+  "scripts": {
+    "test": "jest --verbose",
+    "test:unit": "jest --verbose --testPathPattern=unit/",
+    "test:integration": "jest --verbose --testPathPattern=integration/",
+    "test:watch": "jest --watch"
+  },
+  "devDependencies": {
+    "jest": "^29.7.0",
+    "@jest/globals": "^29.7.0",
+    "ws": "^8.14.2"
+  }
+}

@@ -6,5 +6,8 @@
 .env
 src/wifi_credentials.h
 
+# Node modules
+node_modules/
+
 # Claude Code
 .claude/

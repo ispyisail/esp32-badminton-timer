@@ -20,10 +20,34 @@ void Siren::begin() {
 
 void Siren::update() {
     if (!active) {
+        // Safety: even if not active, ensure relay is off
+        // (protects against state corruption or missed stop())
+        if (relayOn) {
+            digitalWrite(relayPin, LOW);
+            relayOn = false;
+            DEBUG_PRINTLN("Siren safety: relay forced off (inactive but relayOn)");
+        }
         return;
     }
 
     unsigned long now = millis();
+
+    // Safety timeout: if relay has been on for way too long (e.g. loop was blocked),
+    // force it off immediately. This prevents the siren running continuously
+    // if something stalls the main loop.
+    if (relayOn && (now - lastActionTime >= SAFETY_TIMEOUT_MS)) {
+        DEBUG_PRINTF("Siren safety timeout: relay was on for %lu ms, forcing off\n",
+                     now - lastActionTime);
+        digitalWrite(relayPin, LOW);
+        relayOn = false;
+        lastActionTime = now;
+        blastsRemaining--;
+        if (blastsRemaining <= 0) {
+            active = false;
+            DEBUG_PRINTLN("Siren sequence complete (after safety timeout)");
+        }
+        return;
+    }
 
     if (relayOn) {
         // Relay is currently on, check if blast duration has elapsed
