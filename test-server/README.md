@@ -52,55 +52,74 @@ The mock server comes with pre-configured test accounts:
 
 ## What You Can Test
 
-### ✅ Fully Functional Features:
+### Fully Functional Features:
 
 1. **Authentication System**
    - Login as admin/operator/viewer
-   - Role-based permissions
-   - Session management
+   - Role-based permissions (three-tier: viewer / operator / admin)
+   - `login_prompt` event sent on WebSocket connect
+   - Session management per client
 
 2. **Timer Controls**
-   - Start/Stop timer
-   - Set duration
-   - Real-time countdown display
+   - Start/Pause/Resume/Reset timer
+   - Real-time countdown with 1-second ticks
+   - Multi-round support with automatic round transitions
+   - Pause After Next round toggle (`pause_after_next` action, broadcasts `pause_after_next_changed`)
+   - Continuous mode and active event tracking
+   - `mainTimerRemaining` included in pause/resume events
 
-3. **Schedule Management**
-   - Create/Edit/Delete schedules
-   - Weekly calendar view
-   - Enable/Disable scheduling
-   - Club-based filtering (operators see only their schedules)
+3. **Settings** (Admin only)
+   - Save game duration, number of rounds, siren length/pause
+   - Timezone configuration (`set_timezone` action, broadcasts `timezone_changed`)
+   - Factory reset
 
 4. **User Management** (Admin only)
    - Add/Remove operators
    - View operator list
    - Change passwords
 
-5. **NTP Status Display**
+5. **Hello Club Integration**
+   - `get_helloclub_settings` / `save_helloclub_settings` (Admin only)
+   - `get_upcoming_events` - returns cached events (any role)
+   - `helloclub_refresh` - fetches from real Hello Club API if API key is configured (Operator+)
+   - Auto-trigger events based on `timer:` tags in event descriptions
+   - Hourly background polling and expired event purging
+   - Falls back to real HTTPS API calls when an API key is set
+
+6. **QR Code Configuration**
+   - `get_qr_config` - returns SSID, password, encryption, app URL
+   - `save_qr_settings` (Admin only) - persists SSID override, password, encryption
+
+7. **NTP Status Display**
    - Shows simulated time sync status
+   - Timezone-aware formatted time
    - Updates every 5 seconds
 
-### ⚠️ Limitations (Hardware Required):
+### Permissions Model
 
-These features can't be fully tested without the ESP32:
+The mock server enforces the same permission tiers as the firmware:
+
+| Action | Viewer | Operator | Admin |
+|--------|--------|----------|-------|
+| View timer / events | Yes | Yes | Yes |
+| Start / Pause / Reset timer | No | Yes | Yes |
+| Pause After Next | No | Yes | Yes |
+| Refresh Hello Club | No | Yes | Yes |
+| Save settings | No | No | Yes |
+| Manage operators | No | No | Yes |
+| Save Hello Club settings | No | No | Yes |
+| Save QR settings | No | No | Yes |
+| Set timezone | No | No | Yes |
+| Factory reset | No | No | Yes |
+
+### Limitations (Hardware Required):
+
+These features cannot be fully tested without the ESP32:
 - Actual siren/buzzer activation
 - Real NTP time synchronization from internet
 - Non-volatile storage (NVS) persistence
 - WiFi connection management
-- Schedule auto-triggering at specific times
-
-## Mock Data
-
-The server starts with 2 pre-configured test schedules:
-
-1. **Test Club A**
-   - Monday at 18:00
-   - Duration: 90 minutes
-   - Owner: operator1
-
-2. **Test Club B**
-   - Wednesday at 19:30
-   - Duration: 60 minutes
-   - Owner: operator1
+- Boot recovery after power loss during active event
 
 ## Server Console Output
 

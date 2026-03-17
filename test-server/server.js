@@ -299,6 +299,7 @@ wss.on('connection', (ws) => {
     clients.set(clientId, { ws, role: 'viewer', username: 'Viewer' });
     console.log(`✅ Client ${clientId} connected`);
 
+    sendMessage(ws, { event: 'login_prompt', message: 'Welcome! Login for full access or continue as viewer.' });
     sendMessage(ws, { event: 'settings', settings });
     sendMessage(ws, {
         event: 'state',
@@ -388,7 +389,7 @@ function handleMessage(clientId, ws, msg) {
         case 'pause_after_next':
             if (client.role === 'viewer') { sendError(ws, 'Permission denied'); return; }
             pauseAfterNext = msg.enabled === true;
-            broadcast(buildSyncMessage());
+            broadcast({ event: 'pause_after_next_changed', enabled: pauseAfterNext });
             console.log(`⏭️  Pause after next: ${pauseAfterNext}`);
             break;
 
@@ -406,7 +407,7 @@ function handleMessage(clientId, ws, msg) {
             break;
 
         case 'save_settings':
-            if (client.role === 'viewer') { sendError(ws, 'Permission denied'); return; }
+            if (client.role !== 'admin') { sendError(ws, 'Admin access required'); return; }
             if (msg.settings) settings = { ...settings, ...msg.settings };
             broadcast({ event: 'settings', settings });
             console.log('💾 Settings saved:', settings);
@@ -494,7 +495,7 @@ function handleMessage(clientId, ws, msg) {
             break;
 
         case 'helloclub_refresh':
-            if (client.role !== 'admin') { sendError(ws, 'Admin only'); return; }
+            if (client.role === 'viewer') { sendError(ws, 'Permission denied'); return; }
             if (!hcApiKey) {
                 sendMessage(ws, { event: 'helloclub_refresh_result', success: false, message: 'API key not configured' });
                 return;
