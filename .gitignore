@@ -9,5 +9,8 @@ src/wifi_credentials.h
 # Node modules
 node_modules/
 
+# Test artifacts
+tests/package-lock.json
+
 # Claude Code
 .claude/

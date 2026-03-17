@@ -4,7 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-ESP32-based badminton court timer with a web UI served over WebSocket. The ESP32 is the single source of truth for all state (timer, users, schedules). Browser clients connect via WebSocket for real-time bidirectional sync.
+ESP32-based badminton court timer with a web UI served over WebSocket. The ESP32 is the single source of truth for all state (timer, users, schedules). Browser clients connect via WebSocket for real-time bidirectional sync. Integrates with Hello Club API for fetching court bookings.
+
+**Key directories:** `src/` (firmware), `data/` (web UI served from SPIFFS), `test-server/` (dev mock server), `tests/` (Jest unit and integration tests).
 
 ## Build & Upload Commands (PlatformIO)
 
@@ -52,6 +54,8 @@ The test server (`test-server/server.js`) mocks the entire ESP32 WebSocket API i
 - `data/index.html` — UI structure
 - `data/script.js` — WebSocket client, 60fps timer interpolation between 5-second server syncs
 - `data/style.css` — Responsive CSS
+- `data/qrcode.min.js` — QR code generation library
+- `data/qr-test.html` — QR code test/demo page
 
 ## Key Design Constraints
 
