@@ -1,5 +1,7 @@
 # Installation Guide: ESP32 Badminton Court Timer
 
+**Last Updated**: 2026-03-18
+
 This guide provides a complete, step-by-step process for assembling the hardware and installing the software for the ESP32 Badminton Court Timer.
 
 ## Part 1: Hardware Assembly
@@ -79,6 +81,7 @@ This project is built using **PlatformIO**. The recommended way to install the s
 3.  **Configure WiFi:** Your device should automatically open a "captive portal" web page. If it doesn't, open a web browser and go to `http://192.168.4.1`.
 4.  **Select Your Network:** On the portal page, click "Configure WiFi," select your local WiFi network (SSID) from the list, enter its password, and click "Save."
 5.  **Connect:** The ESP32 will restart and connect to your local network. The `BadmintonTimerSetup` network will now disappear.
+6.  **Change Default Admin Password:** Open `http://badminton-timer.local` in your browser, login with the default credentials (`admin` / `admin`), and immediately change the admin password. The new password must be at least 5 characters. Go to the person icon (top right) and select "Change Password."
 
 ## Part 4: Using the Timer
 
@@ -99,3 +102,52 @@ After the initial USB upload, you can update the firmware wirelessly.
 To do this, modify the `platformio.ini` file to specify the upload port as the device's mDNS address and set the upload protocol to `espota`.
 
 **Security Warning:** The OTA password is set in the source code (`src/main.cpp`). If you are deploying this in a public environment, you should change this password to a more secure one.
+
+## Part 6: Hello Club Integration Setup (Optional)
+
+The timer can integrate with Hello Club to automatically start and stop based on Hello Club event bookings. This is optional and requires a Hello Club API key.
+
+### Getting Started
+
+1.  **Get an API key** from Hello Club. Contact your Hello Club administrator or check Hello Club's settings for API access.
+
+2.  **Login as admin** on the timer web interface at `http://badminton-timer.local`.
+
+3.  **Navigate to Settings > Hello Club** in the settings panel.
+
+4.  **Enter your API key** and enable the integration.
+
+5.  **Save** the settings.
+
+### Adding Timer Tags to Hello Club Events
+
+To have Hello Club events automatically control the timer, add a special tag to the event description in Hello Club. The format is:
+
+```
+timer: duration:rounds
+```
+
+Where:
+- `duration` is the round length in minutes
+- `rounds` is the number of rounds (use 0 for continuous mode)
+
+**Examples:**
+- `timer: 12:3` -- 12-minute rounds, 3 rounds total
+- `timer: 15:0` -- 15-minute rounds, continuous mode (no round limit)
+- `timer: 10:5` -- 10-minute rounds, 5 rounds total
+
+Only events with a valid `timer:` tag will trigger the timer.
+
+### Testing the Integration
+
+1.  After saving your API key, use the **manual refresh button** in the UI to force an immediate sync with Hello Club.
+2.  Verify that upcoming events appear in the timer interface.
+3.  Create a test event in Hello Club with a `timer:` tag and confirm it appears.
+4.  Check that the event auto-triggers the timer at the scheduled start time.
+
+### Notes
+
+- Events are fetched periodically in the background. Use the manual refresh button if you need to see changes immediately.
+- If the device reboots during an active Hello Club event, the timer will automatically detect and resume the event.
+- The event cutoff feature ensures the timer stops when the booking period ends, even if rounds are still in progress.
+- Make sure the timer's timezone setting is correct (in Settings) so that Hello Club event times are interpreted properly.

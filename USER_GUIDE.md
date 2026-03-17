@@ -1,7 +1,7 @@
 # ESP32 Badminton Timer - User Guide
 
-**Version**: 3.0.0
-**Last Updated**: 2025-10-30
+**Version**: 3.2.0
+**Last Updated**: 2026-03-18
 
 This guide is for **operators** and **admins** who will be using the badminton timer system on a daily basis. If you're looking for installation instructions, see INSTALL_GUIDE.md instead.
 
@@ -13,12 +13,16 @@ This guide is for **operators** and **admins** who will be using the badminton t
 2. [User Roles](#user-roles)
 3. [Logging In](#logging-in)
 4. [Using the Timer](#using-the-timer)
-5. [Managing Schedules](#managing-schedules)
-6. [User Management (Admin Only)](#user-management-admin-only)
-7. [Understanding NTP Time Sync](#understanding-ntp-time-sync)
-8. [Common Tasks](#common-tasks)
-9. [Troubleshooting](#troubleshooting)
-10. [Tips and Best Practices](#tips-and-best-practices)
+5. [Pause After Next Round](#pause-after-next-round)
+6. [Managing Schedules](#managing-schedules)
+7. [Hello Club Integration](#hello-club-integration)
+8. [QR Code Access](#qr-code-access)
+9. [Timezone Configuration](#timezone-configuration)
+10. [User Management (Admin Only)](#user-management-admin-only)
+11. [Understanding NTP Time Sync](#understanding-ntp-time-sync)
+12. [Common Tasks](#common-tasks)
+13. [Troubleshooting](#troubleshooting)
+14. [Tips and Best Practices](#tips-and-best-practices)
 
 ---
 
@@ -43,7 +47,7 @@ When you first access the timer:
    - Click the person icon (top right)
    - Select "Change Password"
    - Enter current password (`admin`)
-   - Enter and confirm new password
+   - Enter and confirm new password (minimum 5 characters)
    - Click "Change Password"
 4. Create operator accounts for each club coordinator
 
@@ -53,7 +57,7 @@ When you first access the timer:
 
 The system has three levels of access:
 
-### 🔵 Viewer (No Login Required)
+### Viewer (No Login Required)
 
 **What you can do:**
 - View the timer countdown
@@ -73,7 +77,7 @@ The system has three levels of access:
 
 ---
 
-### 🟢 Operator (Club Coordinator)
+### Operator (Club Coordinator)
 
 **What you can do:**
 - Everything a Viewer can do, plus:
@@ -99,7 +103,7 @@ The system has three levels of access:
 
 ---
 
-### 🔴 Admin (System Administrator)
+### Admin (System Administrator)
 
 **What you can do:**
 - Everything an Operator can do, plus:
@@ -107,6 +111,9 @@ The system has three levels of access:
 - Add new operator accounts
 - Remove operator accounts
 - Change admin password
+- Configure Hello Club integration
+- Configure QR code settings
+- Configure timezone
 - Perform factory reset
 
 **Responsibilities:**
@@ -156,7 +163,7 @@ When logged in, you'll see:
 
 1. Make sure the timer is in IDLE state (showing 00:00)
 2. Click the green **"START"** button
-3. The timer will begin counting down
+3. The timer will begin counting down from the configured duration (default: 12 minutes)
 4. A siren will sound at the end (2 blasts)
 
 **Note:** Viewers cannot start the timer - only operators and admins.
@@ -179,9 +186,29 @@ The timer shows:
 - **Main Timer**: Large countdown display (game time)
 - **Current Time**: Clock display at top (synced via internet)
 - **NTP Status**: Indicator next to clock:
-  - ✓ (green) = Time synced, schedules will work
-  - ⏳ (amber) = Syncing time, please wait
-  - ✗ (red) = Time not synced, schedules may not work
+  - Check mark (green) = Time synced, schedules will work
+  - Hourglass (amber) = Syncing time, please wait
+  - X (red) = Time not synced, schedules may not work
+
+---
+
+## Pause After Next Round
+
+During a multi-round session, you may want the timer to pause after the current round finishes rather than automatically starting the next round. This is useful when players need a longer break or when you want to check something before continuing.
+
+### How to Use
+
+1. While the timer is running, look for the **"Pause After Next"** toggle
+2. Toggle it **ON** during any active round
+3. When the current round completes, the timer will pause instead of automatically starting the next round
+4. The timer enters a paused state between rounds
+5. To continue, manually resume the timer
+
+### Notes
+
+- This toggle is only available to operators and admins
+- It only takes effect at the end of the current round, not immediately
+- The toggle resets when the timer is fully reset or a new session starts
 
 ---
 
@@ -253,7 +280,7 @@ When automatic scheduling is enabled:
 2. If current time matches a schedule's start time, timer starts automatically
 3. Timer runs for the scheduled duration
 4. A 2-minute cooldown prevents re-triggering
-5. **Important**: NTP time must be synced (green ✓) for schedules to work
+5. **Important**: NTP time must be synced (green check mark) for schedules to work
 
 ### Viewing Schedules (Role-Based)
 
@@ -262,6 +289,102 @@ When automatic scheduling is enabled:
 - **Viewers**: See all schedules (read-only)
 
 This ensures operators can't accidentally modify another club's booking times.
+
+---
+
+## Hello Club Integration
+
+The timer can integrate with Hello Club to automatically sync events and start the timer based on Hello Club bookings.
+
+### Overview
+
+When configured, the timer will:
+- Fetch upcoming events from Hello Club
+- Display upcoming events in the UI
+- Automatically start the timer when a Hello Club event begins
+- Automatically stop the timer when the booking ends (event cutoff)
+- Resume the timer automatically if the device reboots mid-event
+
+### Setup (Admin Only)
+
+1. Login as admin
+2. Go to **Settings > Hello Club Settings**
+3. Enter your Hello Club API key
+4. Enable the integration
+5. Save settings
+
+### How Event Tags Work
+
+To control the timer from Hello Club events, add a special tag to the event description in Hello Club:
+
+- Format: `timer: duration:rounds`
+- Example: `timer: 12:3` -- 12-minute rounds, 3 rounds
+- Example: `timer: 15:0` -- 15-minute rounds, continuous mode (no round limit)
+
+Only events with a valid `timer:` tag will trigger the timer.
+
+### Viewing Upcoming Events
+
+Once the integration is active, upcoming Hello Club events are visible in the timer UI. These show the event name, time, and configured timer settings.
+
+### Manual Refresh
+
+If you need to force the timer to re-fetch events from Hello Club (for example, after making changes in Hello Club), use the **manual refresh button** in the UI. This triggers an immediate sync rather than waiting for the next automatic fetch.
+
+### Event Auto-Trigger
+
+Events automatically trigger the timer at their scheduled start time. When an event starts:
+- The timer begins with the duration and rounds specified in the event tag
+- The timer stops automatically when the booking period ends (event cutoff)
+
+### Mid-Event Boot Recovery
+
+If the device loses power or reboots while a Hello Club event is in progress, the timer will automatically detect the active event on boot and resume the timer from where it should be. No manual intervention is needed.
+
+---
+
+## QR Code Access
+
+Admins can configure a QR code that visitors can scan to quickly join the WiFi network and access the timer.
+
+### Setup (Admin Only)
+
+1. Login as admin
+2. Go to **Settings > QR Settings**
+3. Configure the following:
+   - **SSID Override**: The WiFi network name to display (if different from the timer's network)
+   - **WiFi Password**: The password for the guest WiFi network
+   - **Encryption Type**: The WiFi encryption type (e.g., WPA/WPA2)
+4. Save settings
+
+### How It Works
+
+Once configured, a QR code is displayed in the UI. Visitors can:
+1. Open their phone camera or a QR code scanner app
+2. Scan the QR code
+3. Their device will prompt them to join the WiFi network
+4. Once connected, they can access the timer at **http://badminton-timer.local**
+
+This is especially useful for new visitors who don't know the WiFi credentials.
+
+---
+
+## Timezone Configuration
+
+The timer supports 20 timezone options to ensure schedules and Hello Club events trigger at the correct local time.
+
+### Setup (Admin Only)
+
+1. Login as admin
+2. Go to **Settings**
+3. Select the appropriate timezone from the dropdown
+4. Save settings
+
+### Notes
+
+- The timezone setting persists across reboots
+- Changing the timezone affects when schedules trigger and how Hello Club event times are interpreted
+- Make sure the timezone is set correctly before creating schedules
 
 ---
 
@@ -278,13 +401,13 @@ This ensures operators can't accidentally modify another club's booking times.
 
 1. Go to "Manage Users" page
 2. Enter the new operator's username (e.g., "club_eagles")
-3. Enter a password (minimum 4 characters)
+3. Enter a password (minimum 5 characters)
 4. Click **"Add Operator"**
 5. Give the username and password to the club coordinator
 
 **Tips:**
 - Use descriptive usernames like "club_name" or "coordinator_name"
-- Passwords must be at least 4 characters
+- Passwords must be at least 5 characters
 - Maximum 10 operators allowed
 - Write down credentials and give them to the operator securely
 
@@ -303,18 +426,18 @@ This ensures operators can't accidentally modify another club's booking times.
 1. Click the person icon (top right)
 2. Select "Change Password"
 3. Enter your current password
-4. Enter new password (minimum 4 characters)
+4. Enter new password (minimum 5 characters)
 5. Confirm new password
 6. Click "Change Password"
 
 **For Admin:**
 1. Same process as above
 2. Old password must be correct
-3. New password has no minimum length (but use a strong one!)
+3. New password must be at least 5 characters
 
 ### Factory Reset (Admin Only)
 
-**⚠️ WARNING: This cannot be undone!**
+**WARNING: This cannot be undone!**
 
 A factory reset will:
 - Delete ALL operator accounts
@@ -322,10 +445,11 @@ A factory reset will:
 - Reset admin password to "admin"
 - Disable automatic scheduling
 - Reset all timer settings to defaults
+- Clear Hello Club integration settings
 
 **To perform factory reset:**
 1. Login as admin
-2. Click person icon → Settings
+2. Click person icon > Settings
 3. Click "Factory Reset" button
 4. Confirm you understand this is irreversible
 5. System resets immediately
@@ -347,17 +471,17 @@ NTP (Network Time Protocol) automatically synchronizes the ESP32's clock with in
 
 Next to the clock display, you'll see one of three indicators:
 
-**✓ (Green Check mark)**
+**Check mark (Green)**
 - Time is successfully synced
 - Schedules will trigger at correct times
 - Everything is working normally
 
-**⏳ (Amber Hourglass, pulsing)**
+**Hourglass (Amber, pulsing)**
 - Currently syncing with time server
 - Wait 30-60 seconds after ESP32 boots
 - Schedules may not work until syncing completes
 
-**✗ (Red X, pulsing)**
+**X (Red, pulsing)**
 - Time sync failed
 - ESP32 may not have internet access
 - **Schedules will NOT work correctly**
@@ -368,11 +492,11 @@ Next to the clock display, you'll see one of three indicators:
 - Schedules depend on accurate time
 - Without NTP sync, the ESP32's clock may drift
 - Drifting clock causes schedules to trigger at wrong times
-- Always check for green ✓ before relying on automatic scheduling
+- Always check for green check mark before relying on automatic scheduling
 
 ### Troubleshooting NTP
 
-If you see ✗ (red X):
+If you see a red X:
 
 1. Check ESP32 has internet access (can it reach external websites?)
 2. Verify router allows UDP port 123 (NTP port)
@@ -398,7 +522,7 @@ If you see ✗ (red X):
    - Hour: 19 (7 PM in 24-hour format)
    - Minute: 0
    - Duration: 120 (2 hours)
-   - Enabled: ✓
+   - Enabled: checked
 6. Click "Save"
 7. Click "Add Schedule" again
 8. Create second schedule:
@@ -407,7 +531,7 @@ If you see ✗ (red X):
    - Hour: 19
    - Minute: 0
    - Duration: 120
-   - Enabled: ✓
+   - Enabled: checked
 9. Click "Save"
 
 Result: Timer will automatically start every Tuesday and Thursday at 7:00 PM for 2 hours.
@@ -483,7 +607,7 @@ Result: Timer will automatically start every Tuesday and Thursday at 7:00 PM for
 
 ### Hardware Factory Reset (Emergency Recovery)
 
-**⚠️ WARNING: This will delete ALL data including:**
+**WARNING: This will delete ALL data including:**
 - All user accounts (admin and operators)
 - All schedules
 - All settings
@@ -516,11 +640,11 @@ Result: Timer will automatically start every Tuesday and Thursday at 7:00 PM for
 4. **After restart:**
    - All settings are back to factory defaults
    - Admin password is reset to: `admin` / `admin`
-   - Timer defaults: 21 minutes, 60 second break, 3 rounds
+   - Timer defaults: 12 minutes, 60 second break, 3 rounds
    - All schedules deleted
    - All operator accounts removed
 
-5. **Immediately change the admin password** after factory reset
+5. **Immediately change the admin password** after factory reset (minimum 5 characters)
 
 **Tips:**
 - Hold the button steady for the full 10 seconds
@@ -541,15 +665,15 @@ Result: Timer will automatically start every Tuesday and Thursday at 7:00 PM for
 **Symptoms:** Timer doesn't start at scheduled time
 
 **Check these:**
-1. **NTP Status**: Must show green ✓ (not ⏳ or ✗)
+1. **NTP Status**: Must show green check mark (not hourglass or X)
 2. **Scheduling Toggle**: Must be ON (green)
 3. **Schedule Enabled**: Individual schedule must have "Enabled" checked
-4. **Correct Time**: Schedule time matches Pacific/Auckland timezone
+4. **Correct Time**: Schedule time matches your configured timezone
 5. **Cooldown**: Wait 2 minutes after last trigger
 6. **Day of Week**: Verify day is correct (0=Sunday, 6=Saturday)
 
 **Steps:**
-1. Check NTP indicator - if red ✗, see "Understanding NTP Time Sync"
+1. Check NTP indicator - if red X, see "Understanding NTP Time Sync"
 2. Check "Automatic Scheduling" toggle at top of schedule page
 3. Click your schedule block and verify "Enabled" is checked
 4. Verify start time is correct (24-hour format)
@@ -619,7 +743,7 @@ Result: Timer will automatically start every Tuesday and Thursday at 7:00 PM for
    - Bad: "Club 1", "Us", "Test"
 
 2. **Check NTP Before Creating Schedules**
-   - Always verify green ✓ before setting up automatic scheduling
+   - Always verify green check mark before setting up automatic scheduling
    - If time is wrong, schedules will trigger at wrong times
 
 3. **Test Your Schedules**
@@ -672,7 +796,7 @@ Result: Timer will automatically start every Tuesday and Thursday at 7:00 PM for
 
 7. **Test NTP Status**
    - Verify time sync works after ESP32 reboots
-   - Check timezone is correct (should show NZ time)
+   - Check timezone is correct in Settings
 
 ---
 
@@ -699,7 +823,6 @@ For faster operation, you can use these keyboard shortcuts:
 
 ---
 
-**User Guide Version**: 3.0.0
-**Last Updated**: 2025-10-30
+**User Guide Version**: 3.2.0
+**Last Updated**: 2026-03-18
 **Project**: ESP32 Badminton Timer
-**Author**: Claude Code

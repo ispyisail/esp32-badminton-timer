@@ -10,7 +10,7 @@ The ESP32 Badminton Timer uses WebSockets for real-time bidirectional communicat
 
 **Authentication**: Role-based access control (VIEWER, OPERATOR, ADMIN)
 
-**Version**: 3.0.0
+**Version**: 3.2.0
 
 ---
 
@@ -18,23 +18,24 @@ The ESP32 Badminton Timer uses WebSockets for real-time bidirectional communicat
 
 ```
 1. Client connects to WebSocket endpoint
-2. Server sends { event: "state", state: {...} }
-3. Client automatically starts in VIEWER mode (no login required)
-4. Optional: Client sends { action: "authenticate", username, password }
-5. Server validates credentials via UserManager
-6. If valid: Server sends { event: "auth_success" } or { event: "viewer_mode" }
-7. If invalid: Server sends { event: "error", message: "ERR_AUTH_FAILED: ..." }
+2. Server sends { event: "login_prompt", message: "..." }
+3. Server sends { event: "state", state: {...} }
+4. Client automatically starts in VIEWER mode (no login required)
+5. Optional: Client sends { action: "authenticate", username, password }
+6. Server validates credentials via UserManager
+7. If valid: Server sends { event: "auth_success" } or { event: "viewer_mode" }
+8. If invalid: Server sends { event: "error", message: "ERR_AUTH_FAILED: ..." }
 ```
 
 ---
 
 ## Message Format
 
-All messages are JSON objects with an `event` (server→client) or `action` (client→server) field.
+All messages are JSON objects with an `event` (server->client) or `action` (client->server) field.
 
 ---
 
-## Client → Server (Actions)
+## Client -> Server (Actions)
 
 ### Authentication Actions
 
@@ -119,29 +120,73 @@ All messages are JSON objects with an `event` (server→client) or `action` (cli
 
 ---
 
+#### pause_after_next
+**Purpose**: Set a one-shot flag to automatically pause between rounds
+
+```json
+{
+  "action": "pause_after_next",
+  "enabled": true
+}
+```
+
+**Permission**: OPERATOR or ADMIN required
+**Response**: `pause_after_next_changed` event broadcast to all clients
+
+**Behavior**: When enabled, the timer will pause at the end of the current round instead of continuing to the next round or break. The flag is cleared after it triggers.
+
+---
+
 #### save_settings
-**Purpose**: Update timer settings (unchanged from v2.0)
+**Purpose**: Update timer settings
 
 ```json
 {
   "action": "save_settings",
   "settings": {
-    "gameDuration": 21,              // minutes (1-120)
-    "breakDuration": 60,              // seconds (1-3600)
-    "numRounds": 3,                   // rounds (1-20)
-    "breakTimerEnabled": true,        // boolean
-    "sirenLength": 1000,              // milliseconds (100-10000)
-    "sirenPause": 1000                // milliseconds (100-10000)
+    "gameDuration": 21,
+    "breakDuration": 60,
+    "numRounds": 3,
+    "breakTimerEnabled": true,
+    "sirenLength": 1000,
+    "sirenPause": 1000
   }
 }
 ```
 
-**Permission**: OPERATOR or ADMIN required
+| Field | Type | Range | Description |
+|-------|------|-------|-------------|
+| `gameDuration` | number | 1-120 | Game duration in minutes |
+| `breakDuration` | number | 1-3600 | Break duration in seconds |
+| `numRounds` | number | 1-20 | Number of rounds |
+| `breakTimerEnabled` | boolean | | Enable break timer between rounds |
+| `sirenLength` | number | 100-10000 | Siren on duration in milliseconds |
+| `sirenPause` | number | 100-10000 | Siren off duration in milliseconds |
+
+**Permission**: ADMIN only
 **Response**: `settings` event broadcast to all clients
 
 ---
 
-### Schedule Management Actions (NEW in v3.0)
+### Timezone Actions
+
+#### set_timezone
+**Purpose**: Set the system timezone
+
+```json
+{
+  "action": "set_timezone",
+  "timezone": "Pacific/Auckland"
+}
+```
+
+**Permission**: ADMIN only
+**Value**: IANA timezone string (e.g. "Pacific/Auckland", "Australia/Sydney")
+**Response**: `timezone_changed` event sent to requester
+
+---
+
+### Schedule Management Actions
 
 #### get_schedules
 **Purpose**: Retrieve all schedules (filtered by role)
@@ -170,23 +215,25 @@ All messages are JSON objects with an `event` (server→client) or `action` (cli
   "action": "add_schedule",
   "schedule": {
     "clubName": "Badminton Club A",
-    "dayOfWeek": 1,                   // 0=Sunday, 1=Monday, ..., 6=Saturday
-    "startHour": 18,                  // 0-23
-    "startMinute": 30,                // 0-59
-    "durationMinutes": 90,            // Duration in minutes
-    "enabled": true                   // Whether this schedule is active
+    "dayOfWeek": 1,
+    "startHour": 18,
+    "startMinute": 30,
+    "durationMinutes": 90,
+    "enabled": true
   }
 }
 ```
 
+| Field | Type | Range | Description |
+|-------|------|-------|-------------|
+| `clubName` | string | non-empty | Club/group name |
+| `dayOfWeek` | number | 0-6 | 0=Sunday, 1=Monday, ..., 6=Saturday |
+| `startHour` | number | 0-23 | Start hour |
+| `startMinute` | number | 0-59 | Start minute |
+| `durationMinutes` | number | >0 | Duration in minutes |
+| `enabled` | boolean | | Whether this schedule is active |
+
 **Permission**: OPERATOR or ADMIN required
-**Validation**:
-- `clubName`: Required, non-empty string
-- `dayOfWeek`: 0-6 (0=Sunday, 6=Saturday)
-- `startHour`: 0-23
-- `startMinute`: 0-59
-- `durationMinutes`: > 0
-- `enabled`: boolean
 
 **Server Behavior**:
 - Generates unique schedule ID (timestamp + counter)
@@ -280,7 +327,7 @@ All messages are JSON objects with an `event` (server→client) or `action` (cli
 
 ---
 
-### User Management Actions (NEW in v3.0)
+### User Management Actions
 
 #### get_operators
 **Purpose**: Retrieve list of all operator accounts
@@ -293,18 +340,6 @@ All messages are JSON objects with an `event` (server→client) or `action` (cli
 
 **Permission**: ADMIN only
 **Response**: `operators_list` event
-
-```json
-{
-  "event": "operators_list",
-  "operators": [
-    { "username": "operator1" },
-    { "username": "operator2" }
-  ]
-}
-```
-
-**Note**: Passwords are never sent to clients
 
 ---
 
@@ -357,21 +392,24 @@ All messages are JSON objects with an `event` (server→client) or `action` (cli
 ---
 
 #### change_password
-**Purpose**: Change password for current user
+**Purpose**: Change password for a user account
 
 ```json
 {
   "action": "change_password",
+  "username": "operator1",
   "oldPassword": "currentpass",
   "newPassword": "newpass123"
 }
 ```
 
-**Permission**: OPERATOR or ADMIN
-**Validation**:
-- `oldPassword`: Must match current password
-- `newPassword`: Minimum 4 characters for operators, no minimum for admin
+| Field | Type | Description |
+|-------|------|-------------|
+| `username` | string | The username whose password to change |
+| `oldPassword` | string | Must match the current password |
+| `newPassword` | string | Minimum 4 characters for operators, no minimum for admin |
 
+**Permission**: OPERATOR or ADMIN
 **Response**: `password_changed` event
 
 **Errors**:
@@ -403,9 +441,130 @@ All messages are JSON objects with an `event` (server→client) or `action` (cli
 
 ---
 
-## Server → Client (Events)
+### Hello Club Integration Actions
 
-### Authentication Events (NEW in v3.0)
+#### get_upcoming_events
+**Purpose**: Get cached Hello Club events
+
+```json
+{
+  "action": "get_upcoming_events"
+}
+```
+
+**Permission**: Any authenticated user
+**Response**: `upcoming_events` event
+
+---
+
+#### get_helloclub_settings
+**Purpose**: Get Hello Club API configuration
+
+```json
+{
+  "action": "get_helloclub_settings"
+}
+```
+
+**Permission**: ADMIN only
+**Response**: `helloclub_settings` event
+
+---
+
+#### save_helloclub_settings
+**Purpose**: Save Hello Club API configuration
+
+```json
+{
+  "action": "save_helloclub_settings",
+  "apiKey": "your-api-key-here",
+  "enabled": true,
+  "defaultDuration": 12
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `apiKey` | string | Hello Club API key |
+| `enabled` | boolean | Enable Hello Club integration |
+| `defaultDuration` | number | Default event duration in minutes |
+
+**Permission**: ADMIN only
+**Response**: `helloclub_settings_saved` event
+
+---
+
+#### helloclub_refresh
+**Purpose**: Force-refresh Hello Club events from the API
+
+```json
+{
+  "action": "helloclub_refresh"
+}
+```
+
+**Permission**: OPERATOR or ADMIN
+**Response**: `helloclub_refresh_result` event
+
+---
+
+### QR Code Actions
+
+#### get_qr_config
+**Purpose**: Get QR code WiFi connection settings
+
+```json
+{
+  "action": "get_qr_config"
+}
+```
+
+**Permission**: Any authenticated user
+**Response**: `qr_config` event
+
+---
+
+#### save_qr_settings
+**Purpose**: Save QR code WiFi connection settings
+
+```json
+{
+  "action": "save_qr_settings",
+  "password": "wifi-password",
+  "encryption": "WPA",
+  "ssid": "MyNetwork"
+}
+```
+
+| Field | Type | Values | Description |
+|-------|------|--------|-------------|
+| `ssid` | string | | WiFi SSID override (optional) |
+| `password` | string | | WiFi password |
+| `encryption` | string | "WPA", "WEP", "nopass" | WiFi encryption type |
+
+**Permission**: ADMIN only
+**Response**: `qr_settings_saved` event
+
+---
+
+## Server -> Client (Events)
+
+### Authentication Events
+
+#### login_prompt
+**When**: Immediately on WebSocket connection
+
+```json
+{
+  "event": "login_prompt",
+  "message": "Please log in or continue as viewer"
+}
+```
+
+**Purpose**: Prompt the client to authenticate
+**Client Action**: Display login form or auto-connect as viewer
+
+---
 
 #### state
 **When**: Client connects, or timer state changes
@@ -414,15 +573,24 @@ All messages are JSON objects with an `event` (server→client) or `action` (cli
 {
   "event": "state",
   "state": {
-    "status": "IDLE",                  // "IDLE" | "RUNNING" | "PAUSED" | "FINISHED"
-    "mainTimer": 1260000,              // milliseconds remaining
-    "breakTimer": 60000,               // milliseconds remaining
-    "currentRound": 1,                 // 1-indexed
+    "status": "IDLE",
+    "mainTimer": 1260000,
+    "breakTimer": 60000,
+    "currentRound": 1,
     "numRounds": 3,
-    "time": "10:45:30 AM"             // Current time (NZ timezone)
+    "time": "10:45:30 AM"
   }
 }
 ```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `status` | string | "IDLE", "RUNNING", "PAUSED", or "FINISHED" |
+| `mainTimer` | number | Milliseconds remaining on main timer |
+| `breakTimer` | number | Milliseconds remaining on break timer |
+| `currentRound` | number | Current round (1-indexed) |
+| `numRounds` | number | Total number of rounds |
+| `time` | string | Current time in configured timezone |
 
 **Purpose**: Send full state snapshot
 **Client Action**: Update UI to reflect current state
@@ -436,7 +604,7 @@ All messages are JSON objects with an `event` (server→client) or `action` (cli
 ```json
 {
   "event": "auth_success",
-  "role": "admin",                     // "admin" | "operator"
+  "role": "admin",
   "username": "admin"
 }
 ```
@@ -488,7 +656,171 @@ All messages are JSON objects with an `event` (server→client) or `action` (cli
 
 ---
 
-### Schedule Events (NEW in v3.0)
+### Timer Events
+
+#### start
+**When**: Timer starts from IDLE or FINISHED
+
+```json
+{
+  "event": "start",
+  "gameDuration": 1260000,
+  "breakDuration": 60000,
+  "numRounds": 3,
+  "currentRound": 1,
+  "continuousMode": false,
+  "pauseAfterNext": false
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `gameDuration` | number | Total game duration in milliseconds |
+| `breakDuration` | number | Total break duration in milliseconds |
+| `numRounds` | number | Total number of rounds |
+| `currentRound` | number | Current round (1-indexed) |
+| `continuousMode` | boolean | Whether break timer is disabled |
+| `pauseAfterNext` | boolean | Whether pause-after-next flag is set |
+
+**Sent to**: All clients (broadcast)
+**Client Action**: Start requestAnimationFrame loop, reset timer display
+
+---
+
+#### sync
+**When**: Timer is RUNNING or PAUSED, sent every 5 seconds
+
+```json
+{
+  "event": "sync",
+  "mainTimerRemaining": 1234567,
+  "breakTimerRemaining": 45678,
+  "serverMillis": 98765432,
+  "currentRound": 2,
+  "numRounds": 3,
+  "status": "RUNNING"
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `mainTimerRemaining` | number | Milliseconds remaining on main timer |
+| `breakTimerRemaining` | number | Milliseconds remaining on break timer |
+| `serverMillis` | number | Server's `millis()` timestamp |
+| `currentRound` | number | Current round (1-indexed) |
+| `numRounds` | number | Total number of rounds |
+| `status` | string | "RUNNING" or "PAUSED" |
+
+**Sent to**: All clients (broadcast)
+**Client Action**: Update sync baseline, calculate current time client-side
+
+---
+
+#### pause
+**When**: Timer paused
+
+```json
+{
+  "event": "pause",
+  "mainTimerRemaining": 1234567
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `mainTimerRemaining` | number | Milliseconds remaining on main timer at time of pause |
+
+---
+
+#### resume
+**When**: Timer resumed
+
+```json
+{
+  "event": "resume",
+  "mainTimerRemaining": 1234567
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `mainTimerRemaining` | number | Milliseconds remaining on main timer at time of resume |
+
+---
+
+#### pause_after_next_changed
+**When**: Pause-after-next flag is toggled
+
+```json
+{
+  "event": "pause_after_next_changed",
+  "enabled": true
+}
+```
+
+**Sent to**: All clients (broadcast)
+**Client Action**: Update pause-after-next toggle/indicator
+
+---
+
+#### reset
+**When**: Timer reset to IDLE
+
+```json
+{
+  "event": "reset"
+}
+```
+
+---
+
+#### finished
+**When**: All rounds complete
+
+```json
+{
+  "event": "finished"
+}
+```
+
+---
+
+#### new_round
+**When**: Round completes and more rounds remain
+
+```json
+{
+  "event": "new_round",
+  "gameDuration": 1260000,
+  "breakDuration": 60000,
+  "currentRound": 2
+}
+```
+
+---
+
+### Settings Event
+
+#### settings
+**When**: Client connects or settings updated
+
+```json
+{
+  "event": "settings",
+  "settings": {
+    "gameDuration": 1260000,
+    "breakDuration": 60000,
+    "numRounds": 3,
+    "breakTimerEnabled": true,
+    "sirenLength": 1000,
+    "sirenPause": 1000
+  }
+}
+```
+
+---
+
+### Schedule Events
 
 #### schedules_list
 **When**: Response to `get_schedules` action or after authentication
@@ -553,13 +885,13 @@ All messages are JSON objects with an `event` (server→client) or `action` (cli
   "schedule": {
     "id": "1698765432-1",
     "clubName": "Badminton Club A (Updated)",
-    "ownerUsername": "operator1",          // Preserved, not from client
+    "ownerUsername": "operator1",
     "dayOfWeek": 2,
     "startHour": 19,
     "startMinute": 0,
     "durationMinutes": 120,
     "enabled": true,
-    "createdAt": 1698765432                // Preserved, not from client
+    "createdAt": 1698765432
   }
 }
 ```
@@ -599,7 +931,7 @@ All messages are JSON objects with an `event` (server→client) or `action` (cli
 
 ---
 
-### User Management Events (NEW in v3.0)
+### User Management Events
 
 #### operators_list
 **When**: Response to `get_operators` action
@@ -607,15 +939,12 @@ All messages are JSON objects with an `event` (server→client) or `action` (cli
 ```json
 {
   "event": "operators_list",
-  "operators": [
-    { "username": "operator1" },
-    { "username": "operator2" }
-  ]
+  "operators": ["operator1", "operator2"]
 }
 ```
 
 **Sent to**: Requester only (ADMIN)
-**Note**: Passwords are never included
+**Note**: Passwords are never included. Operators are returned as a flat string array.
 
 ---
 
@@ -677,126 +1006,24 @@ All messages are JSON objects with an `event` (server→client) or `action` (cli
 
 ---
 
-### Timer Events (Unchanged from v2.0)
+### Timezone Events
 
-#### start
-**When**: Timer starts from IDLE or FINISHED
-
-```json
-{
-  "event": "start",
-  "gameDuration": 1260000,           // Total game duration (milliseconds)
-  "breakDuration": 60000,            // Total break duration (milliseconds)
-  "numRounds": 3,
-  "currentRound": 1
-}
-```
-
-**Sent to**: All clients (broadcast)
-**Client Action**: Start requestAnimationFrame loop, reset timer display
-
----
-
-#### sync
-**When**: Timer is RUNNING or PAUSED, sent every 5 seconds
+#### timezone_changed
+**When**: Timezone successfully updated
 
 ```json
 {
-  "event": "sync",
-  "mainTimerRemaining": 1234567,     // milliseconds remaining
-  "breakTimerRemaining": 45678,
-  "serverMillis": 98765432,          // Server's millis() timestamp
-  "currentRound": 2,
-  "numRounds": 3,
-  "status": "RUNNING"                // "RUNNING" | "PAUSED"
+  "event": "timezone_changed",
+  "timezone": "Pacific/Auckland",
+  "message": "Timezone updated to Pacific/Auckland"
 }
 ```
 
-**Sent to**: All clients (broadcast)
-**Client Action**: Update sync baseline, calculate current time client-side
+**Sent to**: Requester only
 
 ---
 
-#### pause
-**When**: Timer paused
-
-```json
-{
-  "event": "pause"
-}
-```
-
----
-
-#### resume
-**When**: Timer resumed
-
-```json
-{
-  "event": "resume"
-}
-```
-
----
-
-#### reset
-**When**: Timer reset to IDLE
-
-```json
-{
-  "event": "reset"
-}
-```
-
----
-
-#### finished
-**When**: All rounds complete
-
-```json
-{
-  "event": "finished"
-}
-```
-
----
-
-#### new_round
-**When**: Round completes and more rounds remain
-
-```json
-{
-  "event": "new_round",
-  "gameDuration": 1260000,
-  "breakDuration": 60000,
-  "currentRound": 2
-}
-```
-
----
-
-### Settings Event
-
-#### settings
-**When**: Client connects or settings updated
-
-```json
-{
-  "event": "settings",
-  "settings": {
-    "gameDuration": 1260000,          // milliseconds
-    "breakDuration": 60000,
-    "numRounds": 3,
-    "breakTimerEnabled": true,
-    "sirenLength": 1000,
-    "sirenPause": 1000
-  }
-}
-```
-
----
-
-### NTP Status Event (NEW in v3.0)
+### NTP Status Event
 
 #### ntp_status
 **When**: NTP sync status changes, sent every 5 seconds
@@ -808,7 +1035,7 @@ All messages are JSON objects with an `event` (server→client) or `action` (cli
   "time": "10:45:30 AM",
   "timezone": "Pacific/Auckland",
   "dateTime": "2025-10-30 10:45:30",
-  "autoSyncInterval": 30              // minutes
+  "autoSyncInterval": 30
 }
 ```
 
@@ -821,10 +1048,213 @@ All messages are JSON objects with an `event` (server→client) or `action` (cli
 }
 ```
 
-**Sent to**: All clients (broadcast), only on status change
-**Client Action**: Update NTP indicator (✓/✗/⏳)
+| Field | Type | Description |
+|-------|------|-------------|
+| `synced` | boolean | Whether NTP time is synchronized |
+| `time` | string | Formatted time string, or "Not synced" |
+| `timezone` | string | IANA timezone (only when synced) |
+| `dateTime` | string | ISO-style date and time (only when synced) |
+| `autoSyncInterval` | number | Sync interval in minutes (only when synced) |
 
+**Sent to**: All clients (broadcast), only on status change
 **Validation**: Server checks year (2020-2100), month (1-12), day (1-31)
+
+---
+
+### Hello Club Events
+
+#### upcoming_events
+**When**: Response to `get_upcoming_events` action
+
+```json
+{
+  "event": "upcoming_events",
+  "events": [],
+  "lastSync": 1698765432,
+  "lastError": "",
+  "apiConfigured": true
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `events` | array | List of upcoming Hello Club events |
+| `lastSync` | number | Unix timestamp of last successful sync |
+| `lastError` | string | Last error message, empty if none |
+| `apiConfigured` | boolean | Whether Hello Club API key is configured |
+
+**Sent to**: Requester only
+
+---
+
+#### helloclub_settings
+**When**: Response to `get_helloclub_settings` action
+
+```json
+{
+  "event": "helloclub_settings",
+  "apiKey": "***configured***",
+  "enabled": true,
+  "defaultDuration": 12
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `apiKey` | string | "***configured***" if set, empty string if not |
+| `enabled` | boolean | Whether Hello Club integration is enabled |
+| `defaultDuration` | number | Default event duration in minutes |
+
+**Sent to**: Requester only (ADMIN)
+**Note**: The actual API key is never sent to clients. The field indicates whether a key is configured.
+
+---
+
+#### helloclub_settings_saved
+**When**: Hello Club settings successfully saved
+
+```json
+{
+  "event": "helloclub_settings_saved",
+  "message": "Hello Club settings saved"
+}
+```
+
+**Sent to**: Requester only (ADMIN)
+
+---
+
+#### helloclub_refresh_result
+**When**: Response to `helloclub_refresh` action
+
+```json
+{
+  "event": "helloclub_refresh_result",
+  "success": true,
+  "message": "Refreshed successfully",
+  "eventCount": 3,
+  "totalEvents": 10,
+  "debug": ""
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `success` | boolean | Whether the refresh succeeded |
+| `message` | string | Human-readable result message |
+| `eventCount` | number | Number of upcoming events returned |
+| `totalEvents` | number | Total events from API |
+| `debug` | string | Debug information (may be empty) |
+
+**Sent to**: Requester only
+
+---
+
+#### event_auto_started
+**When**: Hello Club event automatically triggers the timer
+
+```json
+{
+  "event": "event_auto_started",
+  "eventName": "Tuesday Badminton",
+  "durationMin": 90,
+  "eventEndTime": 1698800000
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `eventName` | string | Name of the Hello Club event |
+| `durationMin` | number | Event duration in minutes |
+| `eventEndTime` | number | Unix timestamp when the event ends |
+
+**Sent to**: All clients (broadcast)
+
+---
+
+#### event_auto_resumed
+**When**: Timer recovered after a mid-event reboot
+
+```json
+{
+  "event": "event_auto_resumed",
+  "eventName": "Tuesday Badminton",
+  "durationMin": 60,
+  "currentRound": 2,
+  "remainingMs": 3600000,
+  "eventEndTime": 1698800000
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `eventName` | string | Name of the Hello Club event |
+| `durationMin` | number | Remaining duration in minutes |
+| `currentRound` | number | Round being resumed |
+| `remainingMs` | number | Milliseconds remaining |
+| `eventEndTime` | number | Unix timestamp when the event ends |
+
+**Sent to**: All clients (broadcast)
+
+---
+
+#### event_cutoff
+**When**: Hello Club event end time is reached while timer is running
+
+```json
+{
+  "event": "event_cutoff",
+  "message": "Event ended, timer stopped",
+  "eventName": "Tuesday Badminton"
+}
+```
+
+**Sent to**: All clients (broadcast)
+**Behavior**: The timer is automatically stopped when the scheduled event end time is reached.
+
+---
+
+### QR Code Events
+
+#### qr_config
+**When**: Response to `get_qr_config` action
+
+```json
+{
+  "event": "qr_config",
+  "ssid": "BadmintonTimer",
+  "ssidOverride": "",
+  "connectedSsid": "MyWiFi",
+  "password": "wifi-password",
+  "encryption": "WPA",
+  "appUrl": "http://192.168.1.100"
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `ssid` | string | Default SSID (from connected network) |
+| `ssidOverride` | string | User-configured SSID override, empty if not set |
+| `connectedSsid` | string | SSID the ESP32 is currently connected to |
+| `password` | string | Configured WiFi password for QR code |
+| `encryption` | string | "WPA", "WEP", or "nopass" |
+| `appUrl` | string | URL to access the timer web interface |
+
+**Sent to**: Requester only
+
+---
+
+#### qr_settings_saved
+**When**: QR code settings successfully saved
+
+```json
+{
+  "event": "qr_settings_saved",
+  "message": "QR settings saved"
+}
+```
+
+**Sent to**: Requester only (ADMIN)
 
 ---
 
@@ -840,7 +1270,7 @@ All messages are JSON objects with an `event` (server→client) or `action` (cli
 }
 ```
 
-**Error Codes** (v3.0):
+**Error Codes**:
 - `ERR_AUTH_FAILED`: Authentication failed
 - `ERR_RATE_LIMIT`: Too many requests (>10/second)
 - `ERR_PASSWORD_CHANGE`: Old password incorrect
@@ -911,6 +1341,10 @@ socket.onmessage = (event) => {
     const data = JSON.parse(event.data);
 
     switch(data.event) {
+        case 'login_prompt':
+            showLoginForm();
+            break;
+
         case 'state':
             updateTimerDisplay(data.state);
             break;
@@ -942,6 +1376,18 @@ socket.onmessage = (event) => {
             schedules.push(data.schedule);
             renderCalendar();
             showNotification('Schedule added successfully');
+            break;
+
+        case 'pause_after_next_changed':
+            updatePauseAfterNextUI(data.enabled);
+            break;
+
+        case 'upcoming_events':
+            renderUpcomingEvents(data.events);
+            break;
+
+        case 'event_auto_started':
+            showNotification('Event started: ' + data.eventName);
             break;
 
         case 'ntp_status':
@@ -1043,9 +1489,9 @@ function removeOperator(username) {
 - Check serial monitor for auth logs
 
 ### Schedules not triggering
-- Check NTP status shows ✓ (green checkmark)
+- Check NTP status shows synced (green checkmark)
 - Verify scheduling toggle is ON
-- Check schedule time matches Pacific/Auckland timezone
+- Check schedule time matches configured timezone
 - Wait 2 minutes after last trigger (cooldown)
 
 ### Rate limit errors
@@ -1060,7 +1506,6 @@ function removeOperator(username) {
 
 ---
 
-**API Version**: 3.0.0
-**Last Updated**: 2025-10-30
-**Author**: Claude Code
+**API Version**: 3.2.0
+**Last Updated**: 2026-03-18
 **Project**: ESP32 Badminton Timer
