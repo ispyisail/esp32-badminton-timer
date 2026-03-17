@@ -118,6 +118,23 @@ bool HelloClubClient::makeRequest(const String& endpoint, const String& params,
             int contentLen = http.getSize();
             DEBUG_PRINTF("HelloClub API: %d bytes, heap: %d\n", contentLen, ESP.getFreeHeap());
 
+            // Reject oversized responses to prevent OOM
+            // contentLen == -1 means chunked/unknown, allow up to heap check below
+            if (contentLen > 32768) {
+                lastError = "Response too large: " + String(contentLen) + " bytes";
+                http.end();
+                return false;
+            }
+
+            // Check we have enough heap to hold the payload + parsing overhead
+            uint32_t freeHeap = ESP.getFreeHeap();
+            int estimatedNeed = (contentLen > 0 ? contentLen : 8192) * 2; // payload + JSON parse
+            if (freeHeap < (uint32_t)estimatedNeed + 10240) {
+                lastError = "Insufficient heap: " + String(freeHeap) + " free, need ~" + String(estimatedNeed);
+                http.end();
+                return false;
+            }
+
             // Read payload, then free SSL connection before parsing
             String payload = http.getString();
             http.end();

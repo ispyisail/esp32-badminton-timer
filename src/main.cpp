@@ -220,15 +220,19 @@ void setup() {
 
         bootLog("Portal: Scanning networks before starting AP...");
         int numNetworks = WiFi.scanNetworks();
+        int displayCount = min(numNetworks, 10); // Cap at 10 to limit RAM usage
         String networkListHtml = "";
+        networkListHtml.reserve(displayCount * 100);
         for (int i = 0; i < numNetworks; i++) {
             String ssid = WiFi.SSID(i);
             int rssi = WiFi.RSSI(i);
             bool isOpen = (WiFi.encryptionType(i) == WIFI_AUTH_OPEN);
-            networkListHtml += "<div class='net' onclick=\"document.getElementById('s').value='" + ssid + "'\">";
-            networkListHtml += ssid + " (" + String(rssi) + " dBm)";
-            if (isOpen) networkListHtml += " [open]";
-            networkListHtml += "</div>";
+            if (i < displayCount) {
+                networkListHtml += "<div class='net' onclick=\"document.getElementById('s').value='" + ssid + "'\">";
+                networkListHtml += ssid + " (" + String(rssi) + " dBm)";
+                if (isOpen) networkListHtml += " [open]";
+                networkListHtml += "</div>";
+            }
             bootLog("  Found: '%s' RSSI:%d %s", ssid.c_str(), rssi, isOpen ? "OPEN" : "ENCRYPTED");
         }
         WiFi.scanDelete();
@@ -490,6 +494,35 @@ void loop() {
         if (freeHeap < 10240) {
             DEBUG_PRINTLN("WARNING: Free heap below 10KB!");
             bootLog("HEAP WARNING: %u bytes free", freeHeap);
+        }
+    }
+
+    // WiFi reconnection monitoring — check every 30 seconds
+    static unsigned long lastWiFiCheck = 0;
+    static unsigned long wifiDownSince = 0;
+    if (millis() - lastWiFiCheck >= 30000) {
+        lastWiFiCheck = millis();
+        if (WiFi.status() != WL_CONNECTED) {
+            if (wifiDownSince == 0) {
+                wifiDownSince = millis();
+                DEBUG_PRINTLN("WiFi: Connection lost, waiting for auto-reconnect...");
+                bootLog("WiFi: Connection lost");
+            }
+            unsigned long downTime = millis() - wifiDownSince;
+            // If auto-reconnect hasn't worked after 2 minutes, force a reconnect
+            if (downTime > 120000) {
+                DEBUG_PRINTLN("WiFi: Auto-reconnect failed, forcing reconnect...");
+                bootLog("WiFi: Forcing reconnect after %lu sec", downTime / 1000);
+                WiFi.disconnect(true);
+                delay(200);
+                WiFi.reconnect();
+                wifiDownSince = millis(); // Reset timer for next attempt
+            }
+        } else if (wifiDownSince > 0) {
+            unsigned long downTime = millis() - wifiDownSince;
+            DEBUG_PRINTF("WiFi: Reconnected after %lu seconds\n", downTime / 1000);
+            bootLog("WiFi: Reconnected after %lu sec", downTime / 1000);
+            wifiDownSince = 0;
         }
     }
 
