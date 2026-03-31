@@ -84,6 +84,15 @@
                 <div id="pause-after-next-banner" class="pause-banner hidden">
                     Will pause after this round
                 </div>
+
+                <!-- Auto-trigger indicator -->
+                <div id="auto-trigger-info" class="auto-trigger-info hidden">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="12" cy="12" r="10"></circle>
+                        <polyline points="12 6 12 12 16 14"></polyline>
+                    </svg>
+                    <span id="auto-trigger-text"></span>
+                </div>
             </div>
 
             <!-- Controls -->
@@ -270,6 +279,19 @@
                             <polyline points="20 6 9 17 4 12"></polyline>
                         </svg>
                         <span>Save HC Settings</span>
+                    </button>
+                </div>
+
+                <div class="settings-card admin-only">
+                    <h3>Diagnostic Log</h3>
+                    <p class="text-secondary">Remote diagnostic log for Hello Club auto-trigger debugging. Last 40 entries.</p>
+                    <div id="remote-log-container" style="background:#0f172a;color:#e2e8f0;font-family:monospace;font-size:11px;max-height:300px;overflow-y:auto;padding:8px;border-radius:6px;margin:8px 0;white-space:pre-wrap;word-break:break-all;"></div>
+                    <button id="refresh-log-btn" class="btn btn-primary btn-large">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polyline points="23 4 23 10 17 10"></polyline>
+                            <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
+                        </svg>
+                        <span>Refresh Log</span>
                     </button>
                 </div>
 

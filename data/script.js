@@ -63,6 +63,8 @@ const eventWindowInfo = document.getElementById('event-window-info');
 const eventNameDisplay = document.getElementById('event-name-display');
 const eventEndDisplay = document.getElementById('event-end-display');
 const pauseAfterNextBanner = document.getElementById('pause-after-next-banner');
+const autoTriggerInfo = document.getElementById('auto-trigger-info');
+const autoTriggerText = document.getElementById('auto-trigger-text');
 
 // --- State ---
 const SIMULATION_MODE = window.location.protocol.startsWith('file');
@@ -243,6 +245,7 @@ function showSettingsPage(show) {
     if (qrPage) qrPage.classList.add('hidden');
     if (show && userRole === 'admin') {
         sendWebSocketMessage({ action: 'get_helloclub_settings' });
+        sendWebSocketMessage({ action: 'get_remote_log' });
     }
 }
 
@@ -336,6 +339,39 @@ function updateEventWindowDisplay(eventName, eventEndTime) {
         eventWindowInfo.classList.remove('hidden');
     } else {
         eventWindowInfo.classList.add('hidden');
+    }
+}
+
+function updateAutoTriggerDisplay(state) {
+    if (!autoTriggerInfo || !autoTriggerText) return;
+    if (!state.autoEnabled) {
+        autoTriggerInfo.classList.add('hidden');
+        return;
+    }
+    if (state.nextEventName && state.nextEventStart) {
+        const startDate = new Date(state.nextEventStart * 1000);
+        const now = new Date();
+        const diffMs = startDate - now;
+        const diffMin = Math.floor(diffMs / 60000);
+        let timeStr;
+        if (diffMin < 1) {
+            timeStr = 'now';
+        } else if (diffMin < 60) {
+            timeStr = `in ${diffMin}m`;
+        } else if (diffMin < 1440) {
+            const hrs = Math.floor(diffMin / 60);
+            const mins = diffMin % 60;
+            timeStr = mins > 0 ? `in ${hrs}h ${mins}m` : `in ${hrs}h`;
+        } else {
+            const dayStr = startDate.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+            const startStr = startDate.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
+            timeStr = `${dayStr} ${startStr}`;
+        }
+        autoTriggerText.textContent = `Auto: ${state.nextEventName} — ${timeStr}`;
+        autoTriggerInfo.classList.remove('hidden');
+    } else if (state.autoEnabled) {
+        autoTriggerText.textContent = 'Auto: no upcoming events';
+        autoTriggerInfo.classList.remove('hidden');
     }
 }
 
@@ -494,8 +530,12 @@ function renderQrCodes(config) {
 
     // WiFi QR
     if (qrWifiCanvas && config.ssid) {
-        const enc = config.encryption || 'WPA';
-        const wifiStr = `WIFI:T:${enc};S:${escapeWifi(config.ssid)};P:${escapeWifi(config.password || '')};;`;
+        // If no password, encryption must be 'nopass' per Wi-Fi QR spec
+        const hasPassword = config.password && config.password.length > 0;
+        const enc = hasPassword ? (config.encryption || 'WPA') : 'nopass';
+        const wifiStr = hasPassword
+            ? `WIFI:T:${enc};S:${escapeWifi(config.ssid)};P:${escapeWifi(config.password)};;`
+            : `WIFI:T:nopass;S:${escapeWifi(config.ssid)};;`;
         renderQrCode(qrWifiCanvas, wifiStr);
         const ssidLabel = document.getElementById('qr-wifi-label');
         if (ssidLabel) ssidLabel.textContent = config.ssid;
@@ -741,6 +781,14 @@ function initializeEventListeners() {
             const password = document.getElementById('qr-wifi-password')?.value || '';
             const encryption = document.getElementById('qr-wifi-encryption')?.value || 'WPA';
             sendWebSocketMessage({ action: 'save_qr_settings', ssid, password, encryption });
+        });
+    }
+
+    // Remote diagnostic log refresh
+    const refreshLogBtn = document.getElementById('refresh-log-btn');
+    if (refreshLogBtn) {
+        refreshLogBtn.addEventListener('click', () => {
+            sendWebSocketMessage({ action: 'get_remote_log' });
         });
     }
 
@@ -1017,6 +1065,29 @@ function connectWebSocket() {
                 showTemporaryMessage('QR settings saved', 'success');
                 break;
 
+            case 'remote_log': {
+                const container = document.getElementById('remote-log-container');
+                if (container && data.entries) {
+                    if (data.entries.length === 0) {
+                        container.textContent = '(no log entries yet)';
+                    } else {
+                        container.textContent = data.entries.map(e => {
+                            const secs = Math.floor(e.t / 1000);
+                            const mins = Math.floor(secs / 60);
+                            const hrs = Math.floor(mins / 60);
+                            const ts = hrs > 0
+                                ? `${hrs}h${String(mins % 60).padStart(2,'0')}m${String(secs % 60).padStart(2,'0')}s`
+                                : mins > 0
+                                    ? `${mins}m${String(secs % 60).padStart(2,'0')}s`
+                                    : `${secs}s`;
+                            return `[${ts}] ${e.m}`;
+                        }).join('\n');
+                        container.scrollTop = container.scrollHeight;
+                    }
+                }
+                break;
+            }
+
             case 'error':
                 hideLoadingOverlay();
                 showTemporaryMessage(data.message || "An error occurred", "error");
@@ -1141,6 +1212,7 @@ function connectWebSocket() {
                 updatePauseAfterNextVisibility();
                 if (data.state.pauseAfterNext !== undefined) updatePauseAfterNextUI(data.state.pauseAfterNext);
                 if (data.state.activeEventEndTime !== undefined) updateEventWindowDisplay(data.state.activeEventName, data.state.activeEventEndTime);
+                updateAutoTriggerDisplay(data.state);
                 break;
         }
     };

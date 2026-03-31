@@ -343,6 +343,20 @@ body::before {
     animation: pulse 2s ease-in-out infinite;
 }
 
+.auto-trigger-info {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 6px 14px;
+    margin-top: 10px;
+    background: rgba(99, 102, 241, 0.15);
+    color: #818cf8;
+    border-radius: var(--border-radius-sm);
+    font-size: 0.8em;
+    font-weight: 500;
+}
+
 /* --- Controls --- */
 .controls {
     display: flex;
