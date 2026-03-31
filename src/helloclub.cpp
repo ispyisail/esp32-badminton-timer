@@ -1,5 +1,6 @@
 #include "helloclub.h"
 #include "config.h"
+#include "remotelog.h"
 #include <WiFiClientSecure.h>
 #include <time.h>
 #include "freertos/FreeRTOS.h"
@@ -292,6 +293,7 @@ bool HelloClubClient::fetchAndCacheEvents(int daysAhead, Timezone& tz) {
     time_t now = UTC.now();
     if (now < 1000000000) { // Before ~2001 = NTP not synced
         lastError = "NTP time not synced yet";
+        remoteLog("HC fetch: NTP not synced (now=%ld)", (long)now);
         return false;
     }
     struct tm timeinfo;
@@ -394,15 +396,7 @@ bool HelloClubClient::fetchAndCacheEvents(int daysAhead, Timezone& tz) {
             evt.durationMin = duration;
             evt.numRounds = rounds;
 
-            // Preserve triggered state from existing cache
             evt.triggered = false;
-            for (const auto& existing : events) {
-                if (existing.id == evt.id) {
-                    evt.triggered = existing.triggered;
-                    break;
-                }
-            }
-
             newEvents.push_back(evt);
             DEBUG_PRINTF("  Cached: %s %dmin %drounds\n",
                          evt.name.c_str(), evt.durationMin, evt.numRounds);
@@ -424,12 +418,40 @@ bool HelloClubClient::fetchAndCacheEvents(int daysAhead, Timezone& tz) {
         totalEventsFromApi, (int)newEvents.size());
     lastSyncDebug += summaryBuf;
 
-    events = newEvents;
+    // Stage the results — don't modify `events` directly as this may run
+    // on a background task while the main loop reads `events`
+    stagedEvents = newEvents;
+    stagedReady = true;
+
+    DEBUG_PRINTF("HelloClub: Fetched %d events with timer: tag (from %d total), staged for apply\n",
+                 (int)newEvents.size(), totalEventsFromApi);
+    return true;
+}
+
+bool HelloClubClient::applyStagedEvents() {
+    if (!stagedReady) return false;
+    stagedReady = false;
+
+    // Preserve triggered state from existing cache (safe: runs on main loop)
+    // Match on both id AND startTime so recurring events don't cross-contaminate
+    for (auto& staged : stagedEvents) {
+        for (const auto& existing : events) {
+            if (existing.id == staged.id && existing.startTime == staged.startTime) {
+                staged.triggered = existing.triggered;
+                break;
+            }
+        }
+    }
+
+    events = stagedEvents;
+    stagedEvents.clear();
     lastSyncTime = millis();
     saveToNVS();
 
-    DEBUG_PRINTF("HelloClub: Cached %d events with timer: tag (from %d total)\n",
-                 events.size(), totalEventsFromApi);
+    remoteLog("HC fetch: %d total, %d with timer tag", totalEventsFromApi, (int)events.size());
+    for (const auto& e : events) {
+        remoteLog("HC evt: \"%s\" start=%ld trig=%d", e.name.c_str(), (long)e.startTime, e.triggered ? 1 : 0);
+    }
     return true;
 }
 
@@ -504,21 +526,40 @@ RecoveryResult HelloClubClient::checkMidEventRecovery() {
 
     CachedEvent* bestEvent = nullptr;
 
+    remoteLog("Recovery scan: %d events, now=%ld", (int)events.size(), (long)now);
     for (auto& evt : events) {
-        // Must be inside the event time window
-        if (now < evt.startTime || now >= evt.endTime) {
+        // Only recover events that were actually auto-started before the reboot
+        if (!evt.triggered) {
+            remoteLog("Recovery skip \"%s\": never triggered", evt.name.c_str());
+            continue;
+        }
+
+        // Must have started
+        if (now < evt.startTime) {
+            remoteLog("Recovery skip \"%s\": not started yet (start=%ld)", evt.name.c_str(), (long)evt.startTime);
             continue;
         }
 
         time_t elapsed = now - evt.startTime;
         unsigned long roundDurationSec = (unsigned long)evt.durationMin * 60;
 
-        // Non-continuous: check if all rounds are done
+        // Calculate actual play window from timer: tag (not booking endTime)
+        // For short bookings (endTime ≈ startTime), the timer duration is what matters
+        unsigned long totalPlaySec;
         if (evt.numRounds > 0) {
-            unsigned long totalMatchSec = (unsigned long)evt.numRounds * roundDurationSec;
-            if ((unsigned long)elapsed >= totalMatchSec) {
-                continue; // All rounds finished
-            }
+            totalPlaySec = (unsigned long)evt.numRounds * roundDurationSec;
+        } else {
+            // Continuous mode — use the longer of booking duration or timer duration
+            unsigned long bookingDuration = (evt.endTime > evt.startTime)
+                ? (unsigned long)(evt.endTime - evt.startTime) : 0;
+            totalPlaySec = (bookingDuration > roundDurationSec)
+                ? bookingDuration : roundDurationSec;
+        }
+
+        if ((unsigned long)elapsed >= totalPlaySec) {
+            remoteLog("Recovery skip \"%s\": all rounds done (elapsed=%lds total=%lus)",
+                      evt.name.c_str(), (long)elapsed, totalPlaySec);
+            continue; // All rounds finished
         }
 
         // Pick the event with the latest startTime (most relevant)
@@ -544,6 +585,7 @@ RecoveryResult HelloClubClient::checkMidEventRecovery() {
     result.currentRound = currentRound;
     result.remainingMs = remainingInRoundSec * 1000UL;
     result.eventEndTime = bestEvent->endTime;
+    result.eventStartTime = bestEvent->startTime;
 
     DEBUG_PRINTF("Recovery check: event '%s' round %d, %lu sec remaining\n",
                  bestEvent->name.c_str(), currentRound, remainingInRoundSec);
@@ -555,20 +597,30 @@ CachedEvent* HelloClubClient::checkAutoTrigger(Timezone& tz) {
     time_t now = UTC.now();
 
     for (auto& evt : events) {
-        if (evt.triggered) continue;
+        if (evt.triggered) {
+            remoteLog("HC evt \"%s\": already triggered", evt.name.c_str());
+            continue;
+        }
+
+        long delta = (long)(now - evt.startTime);
+        long windowSec = HELLOCLUB_TRIGGER_WINDOW_MS / 1000;
 
         // Check if now is within the trigger window (startTime to startTime + 2 min)
-        if (now >= evt.startTime && now <= evt.startTime + (HELLOCLUB_TRIGGER_WINDOW_MS / 1000)) {
+        if (now >= evt.startTime && now <= evt.startTime + windowSec) {
+            remoteLog("HC evt \"%s\": IN WINDOW delta=%lds", evt.name.c_str(), delta);
             return &evt;
+        } else {
+            remoteLog("HC evt \"%s\": start=%ld now=%ld delta=%lds",
+                      evt.name.c_str(), (long)evt.startTime, (long)now, delta);
         }
     }
 
     return nullptr;
 }
 
-void HelloClubClient::markTriggered(const String& id) {
+void HelloClubClient::markTriggered(const String& id, time_t startTime) {
     for (auto& evt : events) {
-        if (evt.id == id) {
+        if (evt.id == id && evt.startTime == startTime) {
             evt.triggered = true;
             DEBUG_PRINTF("HelloClub: Marked event '%s' as triggered\n", evt.name.c_str());
             saveToNVS();
@@ -577,13 +629,40 @@ void HelloClubClient::markTriggered(const String& id) {
     }
 }
 
+void HelloClubClient::clearAllTriggered() {
+    for (auto& evt : events) {
+        evt.triggered = false;
+    }
+    saveToNVS();
+}
+
 void HelloClubClient::purgeExpired(Timezone& tz) {
     time_t now = UTC.now();
     size_t before = events.size();
 
+    // Keep events for 5 minutes after their endTime if they haven't been triggered yet.
+    // This handles short/instant bookings where endTime ≈ startTime — without this
+    // grace period, the event gets purged before checkAutoTrigger can see it.
+    const time_t PURGE_GRACE_SEC = 300; // 5 minutes
+
     events.erase(
         std::remove_if(events.begin(), events.end(),
-            [now](const CachedEvent& evt) { return evt.endTime < now; }),
+            [now, PURGE_GRACE_SEC](const CachedEvent& evt) {
+                // For triggered events, calculate actual play end time
+                // (short bookings may have endTime << actual play time)
+                if (evt.triggered) {
+                    time_t playEnd = evt.startTime;
+                    if (evt.numRounds > 0) {
+                        playEnd += (time_t)evt.numRounds * evt.durationMin * 60;
+                    } else {
+                        playEnd += (time_t)evt.durationMin * 60;
+                    }
+                    time_t effectiveEnd = (evt.endTime > playEnd) ? evt.endTime : playEnd;
+                    return effectiveEnd + PURGE_GRACE_SEC < now;
+                }
+                // Not triggered — keep for grace period after endTime
+                return evt.endTime + PURGE_GRACE_SEC < now;
+            }),
         events.end()
     );
 

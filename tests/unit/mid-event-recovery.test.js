@@ -7,13 +7,18 @@
  */
 
 /**
- * Replicates the C++ recovery calculation:
- * Given an event's startTime, duration per round, number of rounds,
- * and the current wall-clock time, determine which round we're in
- * and how much time remains in that round.
+ * Replicates the C++ recovery calculation from checkMidEventRecovery():
+ * - Only recovers events that have been triggered (auto-started before reboot)
+ * - Uses play window (from timer: tag) instead of booking endTime
+ * - For short bookings, play duration may exceed booking window
  */
-function calculateRecovery(nowEpoch, startTime, endTime, durationMin, numRounds) {
-  if (nowEpoch < startTime || nowEpoch >= endTime) {
+function calculateRecovery(nowEpoch, startTime, endTime, durationMin, numRounds, triggered = true) {
+  // Must be triggered — only recover events that were actually auto-started
+  if (!triggered) {
+    return { shouldRecover: false };
+  }
+
+  if (nowEpoch < startTime) {
     return { shouldRecover: false };
   }
 
@@ -21,12 +26,18 @@ function calculateRecovery(nowEpoch, startTime, endTime, durationMin, numRounds)
   const roundDurationSec = durationMin * 60;
   const isContinuous = numRounds === 0;
 
+  // Calculate actual play window from timer duration (not booking endTime)
+  let totalPlaySec;
   if (!isContinuous) {
-    const totalGameSec = numRounds * roundDurationSec;
-    if (elapsedSec >= totalGameSec) {
-      // All rounds completed — nothing to recover
-      return { shouldRecover: false };
-    }
+    totalPlaySec = numRounds * roundDurationSec;
+  } else {
+    // Continuous — use the longer of booking duration or timer duration
+    const bookingDuration = endTime > startTime ? endTime - startTime : 0;
+    totalPlaySec = Math.max(bookingDuration, roundDurationSec);
+  }
+
+  if (elapsedSec >= totalPlaySec) {
+    return { shouldRecover: false };
   }
 
   const currentRound = Math.floor(elapsedSec / roundDurationSec) + 1;
@@ -212,6 +223,137 @@ describe('Mid-Event Recovery Math', () => {
         20, 1
       );
       expect(result.shouldRecover).toBe(false);
+    });
+  });
+
+  describe('triggered flag requirement', () => {
+    test('does NOT recover untriggered event', () => {
+      const result = calculateRecovery(
+        BASE_TIME + 600,
+        BASE_TIME,
+        BASE_TIME + 7200,
+        20, 3,
+        false // not triggered
+      );
+      expect(result.shouldRecover).toBe(false);
+    });
+
+    test('recovers triggered event at same point', () => {
+      const result = calculateRecovery(
+        BASE_TIME + 600,
+        BASE_TIME,
+        BASE_TIME + 7200,
+        20, 3,
+        true // triggered
+      );
+      expect(result.shouldRecover).toBe(true);
+      expect(result.currentRound).toBe(1);
+    });
+
+    test('untriggered event mid-window still not recovered', () => {
+      // Even though we're within the event window, if it wasn't
+      // triggered before the reboot, don't recover
+      const result = calculateRecovery(
+        BASE_TIME + 1500,
+        BASE_TIME,
+        BASE_TIME + 7200,
+        20, 3,
+        false
+      );
+      expect(result.shouldRecover).toBe(false);
+    });
+  });
+
+  describe('short booking recovery', () => {
+    test('short booking: 1-min booking, 60-min play — recovers mid-play', () => {
+      const start = BASE_TIME;
+      const end = start + 60;  // 1-minute booking
+
+      // 30 minutes into play (well past booking endTime)
+      const result = calculateRecovery(
+        start + 1800,  // 30 min in
+        start,
+        end,
+        20, 3,  // 3 x 20min = 60min play
+        true
+      );
+      expect(result.shouldRecover).toBe(true);
+      expect(result.currentRound).toBe(2); // 30/20 = 1.5, floor+1 = 2
+      expect(result.remainingMs).toBe(10 * 60 * 1000); // 10 min left in round
+    });
+
+    test('short booking: all rounds completed — no recovery', () => {
+      const start = BASE_TIME;
+      const end = start + 60;
+
+      const result = calculateRecovery(
+        start + 3600,  // 60 min = all 3 rounds done
+        start,
+        end,
+        20, 3,
+        true
+      );
+      expect(result.shouldRecover).toBe(false);
+    });
+
+    test('instant booking (endTime=startTime) still recovers', () => {
+      const start = BASE_TIME;
+      const result = calculateRecovery(
+        start + 300,
+        start,
+        start,  // zero-length booking
+        20, 3,
+        true
+      );
+      expect(result.shouldRecover).toBe(true);
+      expect(result.currentRound).toBe(1);
+    });
+  });
+
+  describe('continuous mode with short bookings', () => {
+    test('continuous, short booking: uses timer duration as minimum', () => {
+      const start = BASE_TIME;
+      const end = start + 60; // 1-min booking
+
+      // Continuous mode, 20-min rounds
+      // Play window: max(bookingDuration=60s, roundDuration=1200s) = 1200s
+      const result = calculateRecovery(
+        start + 600,  // 10 min in
+        start,
+        end,
+        20, 0,  // continuous
+        true
+      );
+      expect(result.shouldRecover).toBe(true);
+    });
+
+    test('continuous, short booking: past timer duration — no recovery', () => {
+      const start = BASE_TIME;
+      const end = start + 60;
+
+      const result = calculateRecovery(
+        start + 1200,  // exactly 20 min = round duration
+        start,
+        end,
+        20, 0,
+        true
+      );
+      expect(result.shouldRecover).toBe(false);
+    });
+
+    test('continuous, long booking: uses booking duration', () => {
+      const start = BASE_TIME;
+      const end = start + 7200; // 2 hour booking
+
+      // max(bookingDuration=7200, roundDuration=1200) = 7200
+      const result = calculateRecovery(
+        start + 3600,  // 1 hour in
+        start,
+        end,
+        20, 0,
+        true
+      );
+      expect(result.shouldRecover).toBe(true);
     });
   });
 });

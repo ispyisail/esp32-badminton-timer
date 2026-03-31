@@ -131,4 +131,47 @@ describe('Auto-Trigger Logic', () => {
       expect(checkAutoTrigger([evt], 1000)).toBeNull();
     });
   });
+
+  describe('recurring events (same id, different startTimes)', () => {
+    test('past occurrence triggered, current occurrence triggers independently', () => {
+      const events = [
+        makeEvent({ id: 'weekly', startTime: 1000, triggered: true }),   // last week
+        makeEvent({ id: 'weekly', startTime: 604800 + 1000, triggered: false }), // this week
+      ];
+      const result = checkAutoTrigger(events, 604800 + 1000);
+      expect(result).toBeTruthy();
+      expect(result.startTime).toBe(604800 + 1000);
+    });
+
+    test('both occurrences triggered — neither fires', () => {
+      const events = [
+        makeEvent({ id: 'weekly', startTime: 1000, triggered: true }),
+        makeEvent({ id: 'weekly', startTime: 604800 + 1000, triggered: true }),
+      ];
+      expect(checkAutoTrigger(events, 604800 + 1000)).toBeNull();
+    });
+
+    test('three occurrences: only middle one in window', () => {
+      const events = [
+        makeEvent({ id: 'weekly', startTime: 1000, triggered: true }),       // past
+        makeEvent({ id: 'weekly', startTime: 10000, triggered: false }),      // current
+        makeEvent({ id: 'weekly', startTime: 20000, triggered: false }),      // future
+      ];
+      const result = checkAutoTrigger(events, 10050);
+      expect(result.startTime).toBe(10000);
+    });
+  });
+
+  describe('short/instant bookings', () => {
+    test('event with endTime near startTime still triggers normally', () => {
+      // Short booking: endTime is 1 minute after startTime
+      const evt = makeEvent({ startTime: 1000, endTime: 1060 });
+      expect(checkAutoTrigger([evt], 1000)).toBeTruthy();
+    });
+
+    test('event with endTime = startTime still triggers', () => {
+      const evt = makeEvent({ startTime: 1000, endTime: 1000 });
+      expect(checkAutoTrigger([evt], 1000)).toBeTruthy();
+    });
+  });
 });

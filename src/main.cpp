@@ -17,6 +17,7 @@
 #include "settings.h"
 #include "users.h"
 #include "helloclub.h"
+#include "remotelog.h"
 #include "esp_system.h"
 
 // ==========================================================================
@@ -169,6 +170,7 @@ String getFormattedTime12Hour();
 void loadHelloClubSettings();
 void saveHelloClubSettings();
 void checkHelloClubPoll();
+void hcFetchTask(void* param);
 bool sirenAllowed();
 
 // ==========================================================================
@@ -199,6 +201,8 @@ void setup() {
     }
 
     bootLogInit();
+    remoteLogInit();
+    remoteLog("BOOT reset=%s heap=%u", getResetReasonStr(), ESP.getFreeHeap());
     bootLog("===== BOOT =====");
     bootLog("Firmware: v%s (%s %s)", FIRMWARE_VERSION, BUILD_DATE, BUILD_TIME);
     bootLog("Reset reason: %s", getResetReasonStr());
@@ -393,6 +397,17 @@ button:hover{background:#c73e54}
         request->send(200, "text/plain", "Boot log cleared.");
     });
 
+    server.on("/diag", HTTP_GET, [](AsyncWebServerRequest *request){
+        String json = remoteLogGetAllJson();
+        request->send(200, "application/json", json);
+    });
+
+    server.on("/clear-triggers", HTTP_GET, [](AsyncWebServerRequest *request){
+        helloClubClient.clearAllTriggered();
+        remoteLog("Cleared all triggered flags via /clear-triggers");
+        request->send(200, "text/plain", "Triggered flags cleared.");
+    });
+
     server.on("/favicon.ico", HTTP_GET, [](AsyncWebServerRequest *request){ request->send(204); });
 
     String configuredTimezone = settings.getTimezone();
@@ -548,22 +563,32 @@ void loop() {
         }
 
         // Also check if we already recovered this event (prevents reboot→recover→crash loops)
-        String lastRecoveredId = "";
+        // Uses id:startTime composite key so recurring events with the same ID
+        // but different start times are treated as separate events
+        String lastRecoveredKey = "";
         {
             Preferences recPrefs;
             if (recPrefs.begin("helloclub", true)) {
-                lastRecoveredId = recPrefs.getString("last_recov", "");
+                lastRecoveredKey = recPrefs.getString("last_recov", "");
                 recPrefs.end();
             }
         }
 
         RecoveryResult recovery = helloClubClient.checkMidEventRecovery();
-        if (recovery.shouldRecover && recovery.eventId != cancelledId && recovery.eventId != lastRecoveredId) {
-            // Persist this event ID immediately so if we crash during recovery, we won't retry
+        String recoveryKey = recovery.shouldRecover
+            ? recovery.eventId + ":" + String((long)recovery.eventStartTime)
+            : "";
+        remoteLog("Boot recovery: should=%d key=%s cancelId=%s lastKey=%s",
+                  recovery.shouldRecover ? 1 : 0,
+                  recovery.shouldRecover ? recoveryKey.c_str() : "n/a",
+                  cancelledId.isEmpty() ? "none" : cancelledId.c_str(),
+                  lastRecoveredKey.isEmpty() ? "none" : lastRecoveredKey.c_str());
+        if (recovery.shouldRecover && recovery.eventId != cancelledId && recoveryKey != lastRecoveredKey) {
+            // Persist composite key immediately so if we crash during recovery, we won't retry
             {
                 Preferences recPrefs;
                 if (recPrefs.begin("helloclub", false)) {
-                    recPrefs.putString("last_recov", recovery.eventId);
+                    recPrefs.putString("last_recov", recoveryKey);
                     recPrefs.end();
                 }
             }
@@ -580,7 +605,14 @@ void loop() {
             }
             timer.startMidRound(recovery.currentRound, recovery.remainingMs);
 
-            activeEventEndTime = recovery.eventEndTime;
+            // For short bookings, use timer duration as minimum end time
+            time_t minEnd = recovery.eventStartTime;
+            if (recovery.numRounds > 0) {
+                minEnd += (time_t)recovery.numRounds * recovery.durationMin * 60;
+            } else {
+                minEnd += (time_t)recovery.durationMin * 60;
+            }
+            activeEventEndTime = (recovery.eventEndTime > minEnd) ? recovery.eventEndTime : minEnd;
             activeEventName = recovery.eventName;
             activeEventId = recovery.eventId;
 
@@ -598,8 +630,8 @@ void loop() {
 
             sendStateUpdate();
             bootLog("Boot recovery: resumed %s round %u", recovery.eventName.c_str(), recovery.currentRound);
-        } else if (recovery.shouldRecover && recovery.eventId == lastRecoveredId) {
-            DEBUG_PRINTF("Boot recovery: skipped %s (already recovered, preventing loop)\n", recovery.eventId.c_str());
+        } else if (recovery.shouldRecover && recoveryKey == lastRecoveredKey) {
+            remoteLog("Boot recovery: skipped (already recovered)");
             bootLog("Boot recovery: skipped %s (already recovered)", recovery.eventId.c_str());
         } else if (recovery.shouldRecover) {
             DEBUG_PRINTF("Boot recovery: skipped %s (manually cancelled)\n", recovery.eventId.c_str());
@@ -650,12 +682,30 @@ void loop() {
         checkHelloClubPoll();
 
         // Auto-trigger check
-        if (helloClubEnabled) {
-            helloClubClient.purgeExpired(myTZ);
+        if (!helloClubEnabled) {
+            // Log only occasionally (every ~5 min) to avoid spam
+            static unsigned long lastDisabledLog = 0;
+            if (millis() - lastDisabledLog > 300000) {
+                remoteLog("HC: disabled, skipping auto-trigger");
+                lastDisabledLog = millis();
+            }
+        } else {
+            // Check trigger BEFORE purging — short bookings (endTime ≈ startTime)
+            // would be purged before the trigger check could see them
+            int evtCount = helloClubClient.getEventCount();
+            bool ntpOk = timeStatus();
+            time_t now = UTC.now();
+            TimerState ts = timer.getState();
+
+            remoteLog("HC check: enabled=%d ntp=%d events=%d timer=%s now=%ld",
+                      helloClubEnabled ? 1 : 0, ntpOk ? 1 : 0, evtCount,
+                      ts == IDLE ? "IDLE" : ts == FINISHED ? "FINISHED" : ts == RUNNING ? "RUNNING" : "PAUSED",
+                      (long)now);
 
             CachedEvent* evt = helloClubClient.checkAutoTrigger(myTZ);
-            if (evt && (timer.getState() == IDLE || timer.getState() == FINISHED)) {
-                DEBUG_PRINTF("Auto-trigger: %s\n", evt->name.c_str());
+            if (evt && (ts == IDLE || ts == FINISHED)) {
+                remoteLog("HC AUTO-START: \"%s\" dur=%dmin rounds=%d",
+                          evt->name.c_str(), evt->durationMin, evt->numRounds);
 
                 timer.setGameDuration(evt->durationMin * 60000UL);
                 if (evt->numRounds > 0) {
@@ -666,10 +716,18 @@ void loop() {
                 }
                 timer.start();
 
-                helloClubClient.markTriggered(evt->id);
+                helloClubClient.markTriggered(evt->id, evt->startTime);
 
-                // Set event window
-                activeEventEndTime = evt->endTime;
+                // Set event window — for short bookings where endTime ≈ startTime,
+                // use the actual timer duration instead so the cutoff doesn't
+                // immediately kill the timer
+                time_t minEndTime = evt->startTime;
+                if (evt->numRounds > 0) {
+                    minEndTime += (time_t)evt->numRounds * evt->durationMin * 60;
+                } else {
+                    minEndTime += (time_t)evt->durationMin * 60;
+                }
+                activeEventEndTime = (evt->endTime > minEndTime) ? evt->endTime : minEndTime;
                 activeEventName = evt->name;
                 activeEventId = evt->id;
 
@@ -687,14 +745,22 @@ void loop() {
                 startDoc["event"] = "event_auto_started";
                 startDoc["eventName"] = evt->name;
                 startDoc["durationMin"] = evt->durationMin;
-                startDoc["eventEndTime"] = (long)evt->endTime;
+                startDoc["eventEndTime"] = (long)activeEventEndTime;
                 String output;
                 serializeJson(startDoc, output);
                 ws.textAll(output);
 
                 sendStateUpdate();
-                DEBUG_PRINTLN("Timer auto-started by Hello Club event");
+                remoteLog("Timer auto-started by HC event");
+            } else if (evt && ts != IDLE && ts != FINISHED) {
+                remoteLog("HC trigger BLOCKED: timer in %s state",
+                          ts == RUNNING ? "RUNNING" : "PAUSED");
+            } else if (!evt && evtCount > 0) {
+                remoteLog("HC trigger: no event in window (%d cached)", evtCount);
             }
+
+            // Purge expired events AFTER trigger check
+            helloClubClient.purgeExpired(myTZ);
         }
     }
 
@@ -865,7 +931,9 @@ void sendStateUpdate(AsyncWebSocketClient *client) {
     JsonObject state = doc.createNestedObject("state");
 
     TimerState timerState = timer.getState();
-    state["status"] = (timerState == RUNNING) ? "RUNNING" : ((timerState == PAUSED) ? "PAUSED" : "IDLE");
+    state["status"] = (timerState == RUNNING) ? "RUNNING" :
+                      (timerState == PAUSED) ? "PAUSED" :
+                      (timerState == FINISHED) ? "FINISHED" : "IDLE";
     state["mainTimer"] = (timerState == RUNNING || timerState == PAUSED) ? timer.getMainTimerRemaining() : timer.getGameDuration();
     state["currentRound"] = timer.getCurrentRound();
     state["numRounds"] = timer.getNumRounds();
@@ -877,6 +945,25 @@ void sendStateUpdate(AsyncWebSocketClient *client) {
     if (activeEventEndTime > 0) {
         state["activeEventEndTime"] = (long)activeEventEndTime;
         state["activeEventName"] = activeEventName;
+    }
+
+    // Include next auto-trigger event info
+    if (helloClubEnabled && helloClubClient.isConfigured()) {
+        state["autoEnabled"] = true;
+        const auto& cachedEvents = helloClubClient.getCachedEvents();
+        time_t now = UTC.now();
+        const CachedEvent* nextEvt = nullptr;
+        for (const auto& evt : cachedEvents) {
+            if (!evt.triggered && evt.startTime > now) {
+                if (!nextEvt || evt.startTime < nextEvt->startTime) {
+                    nextEvt = &evt;
+                }
+            }
+        }
+        if (nextEvt) {
+            state["nextEventName"] = nextEvt->name;
+            state["nextEventStart"] = (long)nextEvt->startTime;
+        }
     }
 
     String output;
@@ -997,6 +1084,8 @@ void checkAndBroadcastNTPStatus() {
 
     if (currentSyncStatus != lastNTPSyncStatus) {
         lastNTPSyncStatus = currentSyncStatus;
+        remoteLog("NTP sync: %s time=%s", currentSyncStatus ? "OK" : "LOST",
+                  currentSyncStatus ? myTZ.dateTime("Y-m-d H:i:s").c_str() : "n/a");
         sendNTPStatus(nullptr);
     }
 }
@@ -1140,7 +1229,8 @@ void handleWebSocketMessage(void *arg, uint8_t *data, size_t len, AsyncWebSocket
                              action == "save_settings" ||
                              action == "save_helloclub_settings" ||
                              action == "save_qr_settings" ||
-                             action == "get_helloclub_settings");
+                             action == "get_helloclub_settings" ||
+                             action == "get_remote_log");
     if (needsAdmin && clientRole < ADMIN) {
         sendError(client, "Admin access required");
         return;
@@ -1420,31 +1510,23 @@ void handleWebSocketMessage(void *arg, uint8_t *data, size_t len, AsyncWebSocket
         client->text(output);
 
     } else if (action == "helloclub_refresh") {
-        if (helloClubClient.fetchAndCacheEvents(HELLOCLUB_DAYS_AHEAD, myTZ)) {
-            lastHelloClubPoll = millis();
-            lastHelloClubPollFailed = false;
-
-            DynamicJsonDocument successDoc(2048);
-            successDoc["event"] = "helloclub_refresh_result";
-            successDoc["success"] = true;
-            successDoc["message"] = String("Synced: ") + helloClubClient.getCachedEvents().size() +
-                " with timer: tag out of " + helloClubClient.getTotalEventsFromApi() + " total events";
-            successDoc["eventCount"] = helloClubClient.getCachedEvents().size();
-            successDoc["totalEvents"] = helloClubClient.getTotalEventsFromApi();
-            successDoc["debug"] = helloClubClient.getLastSyncDebug();
-            String output;
-            serializeJson(successDoc, output);
-            client->text(output);
-
-            sendUpcomingEvents(); // Broadcast to all
+        // Route through background task instead of blocking the main loop
+        if (hcFetchInProgress) {
+            sendError(client, "Sync already in progress");
         } else {
-            DynamicJsonDocument failDoc(2048);
-            failDoc["event"] = "helloclub_refresh_result";
-            failDoc["success"] = false;
-            failDoc["message"] = helloClubClient.getLastError();
-            failDoc["debug"] = helloClubClient.getLastSyncDebug();
+            remoteLog("HC manual refresh requested");
+            hcFetchInProgress = true;
+            hcFetchResultReady = false;
+            lastHelloClubPoll = 0; // Force immediate poll acceptance
+            xTaskCreatePinnedToCore(
+                hcFetchTask, "hcFetch", 8192, nullptr, 1, &hcFetchTaskHandle, 0
+            );
+            StaticJsonDocument<256> ackDoc;
+            ackDoc["event"] = "helloclub_refresh_result";
+            ackDoc["success"] = true;
+            ackDoc["message"] = "Sync started, events will update shortly...";
             String output;
-            serializeJson(failDoc, output);
+            serializeJson(ackDoc, output);
             client->text(output);
         }
 
@@ -1485,6 +1567,12 @@ void handleWebSocketMessage(void *arg, uint8_t *data, size_t len, AsyncWebSocket
         } else {
             sendError(client, "Failed to save QR settings");
         }
+
+    // --- Remote Diagnostic Log ---
+
+    } else if (action == "get_remote_log") {
+        String logJson = remoteLogGetAllJson();
+        client->text(logJson);
     }
 }
 
@@ -1657,6 +1745,9 @@ void loadHelloClubSettings() {
         DEBUG_PRINTF("  Enabled: %s\n", helloClubEnabled ? "Yes" : "No");
 
         helloClubClient.setApiKey(helloClubApiKey);
+        remoteLog("HC settings: enabled=%d key=%s",
+                  helloClubEnabled ? 1 : 0,
+                  helloClubApiKey.isEmpty() ? "none" : "set");
     }
 }
 
@@ -1688,23 +1779,24 @@ void checkHelloClubPoll() {
     }
 
     if (!timeStatus()) {
-        return; // Wait for NTP sync
+        remoteLog("HC poll: NTP not synced, skipping");
+        return;
     }
 
-    // Check if background fetch completed
+    // Check if background fetch completed — apply staged events on main loop
     if (hcFetchResultReady) {
         hcFetchResultReady = false;
         unsigned long now = millis();
         lastHelloClubPoll = now;
 
         if (hcFetchResultSuccess) {
+            helloClubClient.applyStagedEvents();  // Safe: runs on main loop
             lastHelloClubPollFailed = false;
-            DEBUG_PRINTLN("HelloClub: Background poll successful");
+            remoteLog("HC poll OK: %d events cached", helloClubClient.getEventCount());
             sendUpcomingEvents();
         } else {
             lastHelloClubPollFailed = true;
-            DEBUG_PRINTF("HelloClub: Background poll failed - %s (retry in 5min)\n",
-                         helloClubClient.getLastError().c_str());
+            remoteLog("HC poll FAILED: %s", helloClubClient.getLastError().c_str());
         }
         return;
     }
@@ -1721,7 +1813,7 @@ void checkHelloClubPoll() {
         return; // Not time yet
     }
 
-    DEBUG_PRINTLN("HelloClub: Starting background poll...");
+    remoteLog("HC poll: starting fetch...");
     hcFetchInProgress = true;
     hcFetchResultReady = false;
 

@@ -28,6 +28,7 @@ struct RecoveryResult {
     unsigned int currentRound;
     unsigned long remainingMs;  // milliseconds remaining in current round
     time_t eventEndTime;
+    time_t eventStartTime;
 };
 
 class HelloClubClient {
@@ -37,9 +38,12 @@ public:
     void setApiKey(const String& apiKey);
     void setDefaults(uint16_t defaultDuration, uint8_t defaultRounds);
 
-    // Fetch events with timer: tag from HC API, update cache
-    // Returns true if fetch succeeded (cache updated)
+    // Fetch events with timer: tag from HC API into staging area
+    // Returns true if fetch succeeded. Call applyStagedEvents() on main loop to apply.
     bool fetchAndCacheEvents(int daysAhead, Timezone& tz);
+
+    // Apply staged events from background fetch to the live cache (call from main loop only)
+    bool applyStagedEvents();
 
     // Load cached events from NVS (for boot without internet)
     void loadFromNVS();
@@ -51,8 +55,11 @@ public:
     // Returns pointer to event if trigger should fire, nullptr otherwise
     CachedEvent* checkAutoTrigger(Timezone& tz);
 
-    // Mark event as triggered and save
-    void markTriggered(const String& id);
+    // Mark event as triggered and save (matches on id + startTime for recurring events)
+    void markTriggered(const String& id, time_t startTime);
+
+    // Clear all triggered flags (for debugging)
+    void clearAllTriggered();
 
     // Check if we're mid-event after a reboot — returns recovery info
     RecoveryResult checkMidEventRecovery();
@@ -62,6 +69,9 @@ public:
 
     // Get all cached events (for WebSocket broadcast)
     const std::vector<CachedEvent>& getCachedEvents() const { return events; }
+
+    // Get number of cached events
+    int getEventCount() const { return (int)events.size(); }
 
     // Get last sync time (millis)
     unsigned long getLastSyncTime() const { return lastSyncTime; }
@@ -87,6 +97,10 @@ private:
     int totalEventsFromApi = 0;
     String lastSyncDebug;
     std::vector<CachedEvent> events;
+
+    // Staging area for background fetch (written on background task, read on main loop)
+    std::vector<CachedEvent> stagedEvents;
+    volatile bool stagedReady = false;
 
     static const int HC_MAX_EVENTS = 20;
     static const char* NVS_NAMESPACE;

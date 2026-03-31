@@ -127,4 +127,59 @@ describe('Boot Recovery Cancel Logic', () => {
       expect(shouldResumeTimer(recovery, '')).toBe(false);
     });
   });
+
+  describe('composite key (id:startTime) for recurring events', () => {
+    /**
+     * The cancel/recovery key for recurring events must include startTime
+     * to avoid one occurrence's cancel blocking a different occurrence.
+     */
+    function makeCompositeKey(eventId, startTime) {
+      return `${eventId}:${startTime}`;
+    }
+
+    function shouldResumeWithCompositeKey(recovery, cancelledKey) {
+      if (!recovery.shouldRecover) return false;
+      const recoveryKey = makeCompositeKey(recovery.eventId, recovery.startTime);
+      if (recoveryKey === cancelledKey) return false;
+      return true;
+    }
+
+    test('composite key blocks same occurrence', () => {
+      const cancelKey = makeCompositeKey('weekly', 1000);
+      const recovery = { shouldRecover: true, eventId: 'weekly', startTime: 1000 };
+      expect(shouldResumeWithCompositeKey(recovery, cancelKey)).toBe(false);
+    });
+
+    test('composite key allows different occurrence of same event', () => {
+      // Cancelled last week's occurrence
+      const cancelKey = makeCompositeKey('weekly', 1000);
+      // This week's occurrence has different startTime
+      const recovery = { shouldRecover: true, eventId: 'weekly', startTime: 604800 + 1000 };
+      expect(shouldResumeWithCompositeKey(recovery, cancelKey)).toBe(true);
+    });
+
+    test('composite key allows different event entirely', () => {
+      const cancelKey = makeCompositeKey('evt_a', 1000);
+      const recovery = { shouldRecover: true, eventId: 'evt_b', startTime: 1000 };
+      expect(shouldResumeWithCompositeKey(recovery, cancelKey)).toBe(true);
+    });
+
+    test('no cancel key — always resumes', () => {
+      const recovery = { shouldRecover: true, eventId: 'weekly', startTime: 1000 };
+      expect(shouldResumeWithCompositeKey(recovery, '')).toBe(true);
+    });
+
+    test('scenario: cancel weekly Tuesday, reboot during weekly Thursday', () => {
+      const tuesdayStart = 1773100800;  // Tuesday
+      const thursdayStart = 1773273600;  // Thursday
+
+      const cancelKey = makeCompositeKey('badminton', tuesdayStart);
+      const recovery = {
+        shouldRecover: true,
+        eventId: 'badminton',
+        startTime: thursdayStart,
+      };
+      expect(shouldResumeWithCompositeKey(recovery, cancelKey)).toBe(true);
+    });
+  });
 });
