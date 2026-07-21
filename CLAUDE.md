@@ -51,7 +51,9 @@ npx jest unit/timer-state-machine.test.js    # single file
 
 Jest exercises the JS UI logic and the mock server — it never builds or runs the firmware, so C++ changes are not covered by it. Verify those with `pio run`.
 
-A handful of integration tests fail on a clean checkout (settings permissions, timer sync, pause-after-next). They are pre-existing, and at least one is a genuine spec disagreement rather than a flake: the suite expects an OPERATOR to be able to `save_settings`, while `main.cpp` gates that action behind ADMIN.
+**The integration suite is flaky.** All integration suites share one mock-server instance on port 18080 whose timer and user state is never reset between them, so results depend on execution order and timing — identical back-to-back runs of the same command have produced anywhere from 0 to 4 failures, and `--runInBand` does not fix it. Any individual suite run on its own (`npx jest --selectProjects integration --testPathPattern=timer-sync`) passes reliably.
+
+Treat a failure here as unproven until you reproduce it in isolation. Adding or removing a test shifts the ordering and will change which unrelated tests fail, so do not read a changed failure list as a regression in what you just edited.
 
 ## Architecture
 
