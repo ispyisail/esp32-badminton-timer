@@ -111,7 +111,7 @@ bool HelloClubClient::makeRequest(const String& endpoint, const String& params,
 
         http.addHeader("X-Api-Key", apiKey);
         http.addHeader("Accept", "application/json");
-        http.setTimeout(5000);
+        http.setTimeout(HELLOCLUB_REQUEST_TIMEOUT_MS);
 
         int httpCode = http.GET();
 
@@ -228,7 +228,7 @@ bool HelloClubClient::parseTimerTag(const String& description, uint16_t& duratio
         }
         if (numStr.length() > 0) {
             int val = numStr.toInt();
-            if (val >= 1 && val <= 120) {
+            if (val >= (int)MIN_GAME_DURATION_MIN && val <= (int)MAX_GAME_DURATION_MIN) {
                 duration = val;
             }
         }
@@ -248,7 +248,7 @@ bool HelloClubClient::parseTimerTag(const String& description, uint16_t& duratio
         }
         if (numStr.length() > 0) {
             int val = numStr.toInt();
-            if (val >= 1 && val <= 20) {
+            if (val >= (int)MIN_ROUNDS && val <= (int)MAX_ROUNDS) {
                 rounds = val; // Non-zero = fixed round count
             }
         }

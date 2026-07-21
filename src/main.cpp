@@ -113,7 +113,6 @@ const unsigned long RATE_LIMIT_WINDOW = 1000;
 
 // Session Timeout
 std::map<uint32_t, unsigned long> clientLastActivity;
-const unsigned long SESSION_TIMEOUT = 30 * 60 * 1000;
 
 // Periodic Sync
 unsigned long lastSyncBroadcast = 0;
@@ -292,13 +291,16 @@ void setup() {
         }
         WiFi.scanDelete();
 
+        IPAddress apAddress;
+        apAddress.fromString(AP_IP);
+
         WiFi.mode(WIFI_AP);
         delay(100);
-        WiFi.softAPConfig(IPAddress(192, 168, 4, 1), IPAddress(192, 168, 4, 1), IPAddress(255, 255, 255, 0));
-        WiFi.softAP("BadmintonTimerSetup");
+        WiFi.softAPConfig(apAddress, apAddress, IPAddress(255, 255, 255, 0));
+        WiFi.softAP(AP_SSID);
         bootLog("Portal: AP started, IP: %s", WiFi.softAPIP().toString().c_str());
 
-        dns.start(53, "*", IPAddress(192, 168, 4, 1));
+        dns.start(53, "*", apAddress);
         bootLog("Portal: DNS captive redirect active");
 
         String configPage = R"rawhtml(
@@ -334,7 +336,7 @@ button:hover{background:#c73e54}
 
         server.onNotFound([](AsyncWebServerRequest *request){
             bootLog("Portal: Redirecting %s -> /", request->url().c_str());
-            request->redirect("http://192.168.4.1/");
+            request->redirect(String("http://") + AP_IP + "/");
         });
 
         volatile bool portalDone = false;
@@ -359,7 +361,7 @@ button:hover{background:#c73e54}
         bootLog("Portal: Web server started, waiting for user...");
 
         unsigned long portalStart = millis();
-        while (!portalDone && millis() - portalStart < 300000) {
+        while (!portalDone && millis() - portalStart < CAPTIVE_PORTAL_TIMEOUT_SEC * 1000UL) {
             dns.processNextRequest();
             esp_task_wdt_reset();
             delay(10);
@@ -395,7 +397,7 @@ button:hover{background:#c73e54}
                 ESP.restart();
             }
         } else {
-            bootLog("Portal: TIMEOUT after 5 min, restarting");
+            bootLog("Portal: TIMEOUT after %lu sec, restarting", CAPTIVE_PORTAL_TIMEOUT_SEC);
             delay(2000);
             ESP.restart();
         }
@@ -689,7 +691,7 @@ void loop() {
             activeEventId = recovery.eventId;
 
             // Broadcast recovery notification
-            StaticJsonDocument<512> recDoc;
+            StaticJsonDocument<JSON_DOC_SIZE_MEDIUM> recDoc;
             recDoc["event"] = "event_auto_resumed";
             recDoc["eventName"] = recovery.eventName;
             recDoc["durationMin"] = recovery.durationMin;
@@ -713,7 +715,7 @@ void loop() {
 
     // Session timeout check (every 60 seconds)
     static unsigned long lastSessionCheck = 0;
-    if (millis() - lastSessionCheck >= 60000) {
+    if (millis() - lastSessionCheck >= SESSION_CHECK_INTERVAL_MS) {
         lastSessionCheck = millis();
         unsigned long now = millis();
 
@@ -721,7 +723,7 @@ void loop() {
             uint32_t clientId = it->first;
             unsigned long lastActivity = it->second;
 
-            if (now - lastActivity >= SESSION_TIMEOUT) {
+            if (now - lastActivity >= SESSION_TIMEOUT_MS) {
                 if (authenticatedClients.find(clientId) != authenticatedClients.end() &&
                     authenticatedClients[clientId] != VIEWER) {
 
@@ -813,7 +815,7 @@ void loop() {
                 }
 
                 // Broadcast auto-start notification
-                StaticJsonDocument<512> startDoc;
+                StaticJsonDocument<JSON_DOC_SIZE_MEDIUM> startDoc;
                 startDoc["event"] = "event_auto_started";
                 startDoc["eventName"] = evt->name;
                 startDoc["durationMin"] = evt->durationMin;
@@ -844,7 +846,7 @@ void loop() {
             timer.reset();
             siren.stop();
 
-            StaticJsonDocument<256> cutoffDoc;
+            StaticJsonDocument<JSON_DOC_SIZE_SMALL> cutoffDoc;
             cutoffDoc["event"] = "event_cutoff";
             cutoffDoc["message"] = "Session ended - booking time expired";
             cutoffDoc["eventName"] = activeEventName;
@@ -874,7 +876,7 @@ void loop() {
 
                 if (timer.getState() == PAUSED) {
                     // pauseAfterNext triggered — tell clients we're paused
-                    StaticJsonDocument<256> pauseDoc;
+                    StaticJsonDocument<JSON_DOC_SIZE_SMALL> pauseDoc;
                     pauseDoc["event"] = "pause";
                     pauseDoc["mainTimerRemaining"] = timer.getMainTimerRemaining();
                     pauseDoc["currentRound"] = timer.getCurrentRound();
@@ -884,7 +886,7 @@ void loop() {
                     ws.textAll(output);
                 } else {
                     // Normal next round
-                    StaticJsonDocument<256> roundDoc;
+                    StaticJsonDocument<JSON_DOC_SIZE_SMALL> roundDoc;
                     roundDoc["event"] = "new_round";
                     roundDoc["gameDuration"] = timer.getGameDuration();
                     roundDoc["currentRound"] = timer.getCurrentRound();
@@ -962,7 +964,7 @@ static bool tryWiFiNetwork(const char* ssid, const char* password) {
     }
 
     unsigned long startAttemptTime = millis();
-    while (WiFi.status() != WL_CONNECTED && millis() - startAttemptTime < 15000) {
+    while (WiFi.status() != WL_CONNECTED && millis() - startAttemptTime < WIFI_CONNECT_TIMEOUT_MS) {
         esp_task_wdt_reset();
         delay(500);
         Serial.print(".");
@@ -1055,7 +1057,7 @@ bool sirenAllowed() {
 // ==========================================================================
 
 void sendEvent(const String& type) {
-    StaticJsonDocument<256> doc;
+    StaticJsonDocument<JSON_DOC_SIZE_SMALL> doc;
     doc["event"] = type;
     String output;
     serializeJson(doc, output);
@@ -1063,7 +1065,7 @@ void sendEvent(const String& type) {
 }
 
 void sendStateUpdate(AsyncWebSocketClient *client) {
-    StaticJsonDocument<512> doc;
+    StaticJsonDocument<JSON_DOC_SIZE_MEDIUM> doc;
     doc["event"] = "state";
     JsonObject state = doc.createNestedObject("state");
 
@@ -1113,7 +1115,7 @@ void sendStateUpdate(AsyncWebSocketClient *client) {
 }
 
 void sendSettingsUpdate(AsyncWebSocketClient *client) {
-    StaticJsonDocument<512> doc;
+    StaticJsonDocument<JSON_DOC_SIZE_MEDIUM> doc;
     doc["event"] = "settings";
     JsonObject settingsObj = doc.createNestedObject("settings");
     settingsObj["gameDuration"] = timer.getGameDuration();
@@ -1131,7 +1133,7 @@ void sendSettingsUpdate(AsyncWebSocketClient *client) {
 }
 
 void sendSync(AsyncWebSocketClient *client) {
-    StaticJsonDocument<512> syncDoc;
+    StaticJsonDocument<JSON_DOC_SIZE_MEDIUM> syncDoc;
     syncDoc["event"] = "sync";
     syncDoc["mainTimerRemaining"] = timer.getMainTimerRemaining();
     syncDoc["serverMillis"] = millis();
@@ -1158,7 +1160,7 @@ void sendSync(AsyncWebSocketClient *client) {
 void sendError(AsyncWebSocketClient *client, const String& message) {
     if (!client) return;
 
-    StaticJsonDocument<256> doc;
+    StaticJsonDocument<JSON_DOC_SIZE_SMALL> doc;
     doc["event"] = "error";
     doc["message"] = message;
 
@@ -1170,7 +1172,7 @@ void sendError(AsyncWebSocketClient *client, const String& message) {
 void sendAuthRequest(AsyncWebSocketClient *client) {
     if (!client) return;
 
-    StaticJsonDocument<256> doc;
+    StaticJsonDocument<JSON_DOC_SIZE_SMALL> doc;
     doc["event"] = "auth_required";
     doc["message"] = "Please enter password to control timer";
 
@@ -1180,7 +1182,7 @@ void sendAuthRequest(AsyncWebSocketClient *client) {
 }
 
 void sendNTPStatus(AsyncWebSocketClient *client) {
-    StaticJsonDocument<512> doc;
+    StaticJsonDocument<JSON_DOC_SIZE_MEDIUM> doc;
     doc["event"] = "ntp_status";
 
     bool synced = (myTZ.year() > 2020 && myTZ.year() < 2100 &&
@@ -1283,7 +1285,7 @@ void handleWebSocketMessage(void *arg, uint8_t *data, size_t len, AsyncWebSocket
 
     clientLastActivity[clientId] = now;
 
-    StaticJsonDocument<1024> doc;
+    StaticJsonDocument<JSON_DOC_SIZE_LARGE> doc;
     DeserializationError error = deserializeJson(doc, data, len);
     if (error) {
         Serial.println(F("deserializeJson() failed"));
@@ -1307,7 +1309,7 @@ void handleWebSocketMessage(void *arg, uint8_t *data, size_t len, AsyncWebSocket
             authenticatedClients[client->id()] = VIEWER;
             authenticatedUsernames[client->id()] = "Viewer";
 
-            StaticJsonDocument<256> viewerDoc;
+            StaticJsonDocument<JSON_DOC_SIZE_SMALL> viewerDoc;
             viewerDoc["event"] = "viewer_mode";
             viewerDoc["role"] = "viewer";
             viewerDoc["username"] = "Viewer";
@@ -1331,7 +1333,7 @@ void handleWebSocketMessage(void *arg, uint8_t *data, size_t len, AsyncWebSocket
             authenticatedClients[client->id()] = role;
             authenticatedUsernames[client->id()] = username;
 
-            StaticJsonDocument<256> authDoc;
+            StaticJsonDocument<JSON_DOC_SIZE_SMALL> authDoc;
             authDoc["event"] = "auth_success";
             authDoc["role"] = (role == ADMIN) ? "admin" : "operator";
             authDoc["username"] = username;
@@ -1383,7 +1385,7 @@ void handleWebSocketMessage(void *arg, uint8_t *data, size_t len, AsyncWebSocket
         if (timer.getState() == IDLE || timer.getState() == FINISHED) {
             timer.start();
 
-            StaticJsonDocument<256> startDoc;
+            StaticJsonDocument<JSON_DOC_SIZE_SMALL> startDoc;
             startDoc["event"] = "start";
             startDoc["gameDuration"] = timer.getGameDuration();
             startDoc["numRounds"] = timer.getNumRounds();
@@ -1397,7 +1399,7 @@ void handleWebSocketMessage(void *arg, uint8_t *data, size_t len, AsyncWebSocket
     } else if (action == "pause") {
         if (timer.getState() == RUNNING) {
             timer.pause();
-            StaticJsonDocument<256> pauseDoc;
+            StaticJsonDocument<JSON_DOC_SIZE_SMALL> pauseDoc;
             pauseDoc["event"] = "pause";
             pauseDoc["mainTimerRemaining"] = timer.getMainTimerRemaining();
             String pauseOut;
@@ -1405,7 +1407,7 @@ void handleWebSocketMessage(void *arg, uint8_t *data, size_t len, AsyncWebSocket
             ws.textAll(pauseOut);
         } else if (timer.getState() == PAUSED) {
             timer.resume();
-            StaticJsonDocument<256> resumeDoc;
+            StaticJsonDocument<JSON_DOC_SIZE_SMALL> resumeDoc;
             resumeDoc["event"] = "resume";
             resumeDoc["mainTimerRemaining"] = timer.getMainTimerRemaining();
             String resumeOut;
@@ -1433,7 +1435,7 @@ void handleWebSocketMessage(void *arg, uint8_t *data, size_t len, AsyncWebSocket
         bool enabled = doc["enabled"] | false;
         timer.setPauseAfterNext(enabled);
 
-        StaticJsonDocument<256> panDoc;
+        StaticJsonDocument<JSON_DOC_SIZE_SMALL> panDoc;
         panDoc["event"] = "pause_after_next_changed";
         panDoc["enabled"] = enabled;
         String output;
@@ -1448,21 +1450,30 @@ void handleWebSocketMessage(void *arg, uint8_t *data, size_t len, AsyncWebSocket
         unsigned long sirenLen = settingsObj["sirenLength"].as<unsigned long>();
         unsigned long sirenPau = settingsObj["sirenPause"].as<unsigned long>();
 
+        char msg[80];
         unsigned long gameDurMin = gameDurMs / 60000;  // Convert to minutes for validation
-        if (gameDurMin < 1 || gameDurMin > 120) {
-            sendError(client, "Game duration must be between 1 and 120 minutes");
+        if (gameDurMin < MIN_GAME_DURATION_MIN || gameDurMin > MAX_GAME_DURATION_MIN) {
+            snprintf(msg, sizeof(msg), "Game duration must be between %lu and %lu minutes",
+                     MIN_GAME_DURATION_MIN, MAX_GAME_DURATION_MIN);
+            sendError(client, msg);
             return;
         }
-        if (rounds < 1 || rounds > 20) {
-            sendError(client, "Number of rounds must be between 1 and 20");
+        if (rounds < MIN_ROUNDS || rounds > MAX_ROUNDS) {
+            snprintf(msg, sizeof(msg), "Number of rounds must be between %u and %u",
+                     MIN_ROUNDS, MAX_ROUNDS);
+            sendError(client, msg);
             return;
         }
-        if (sirenLen < 100 || sirenLen > 10000) {
-            sendError(client, "Siren length must be between 100 and 10000 ms");
+        if (sirenLen < MIN_SIREN_LENGTH_MS || sirenLen > MAX_SIREN_LENGTH_MS) {
+            snprintf(msg, sizeof(msg), "Siren length must be between %lu and %lu ms",
+                     MIN_SIREN_LENGTH_MS, MAX_SIREN_LENGTH_MS);
+            sendError(client, msg);
             return;
         }
-        if (sirenPau < 100 || sirenPau > 10000) {
-            sendError(client, "Siren pause must be between 100 and 10000 ms");
+        if (sirenPau < MIN_SIREN_PAUSE_MS || sirenPau > MAX_SIREN_PAUSE_MS) {
+            snprintf(msg, sizeof(msg), "Siren pause must be between %lu and %lu ms",
+                     MIN_SIREN_PAUSE_MS, MAX_SIREN_PAUSE_MS);
+            sendError(client, msg);
             return;
         }
 
@@ -1486,7 +1497,7 @@ void handleWebSocketMessage(void *arg, uint8_t *data, size_t len, AsyncWebSocket
             myTZ.setLocation(timezone);
             Serial.printf("Timezone changed to: %s\n", timezone.c_str());
 
-            StaticJsonDocument<256> successDoc;
+            StaticJsonDocument<JSON_DOC_SIZE_SMALL> successDoc;
             successDoc["event"] = "timezone_changed";
             successDoc["timezone"] = timezone;
             successDoc["message"] = "Timezone updated successfully";
@@ -1516,7 +1527,7 @@ void handleWebSocketMessage(void *arg, uint8_t *data, size_t len, AsyncWebSocket
         } else if (userManager.usernameExists(username)) {
             sendError(client, "Username already exists");
         } else if (userManager.addOperator(username, password)) {
-            StaticJsonDocument<256> successDoc;
+            StaticJsonDocument<JSON_DOC_SIZE_SMALL> successDoc;
             successDoc["event"] = "operator_added";
             successDoc["username"] = username;
             String output;
@@ -1529,7 +1540,7 @@ void handleWebSocketMessage(void *arg, uint8_t *data, size_t len, AsyncWebSocket
         String username = doc["username"] | "";
 
         if (userManager.removeOperator(username)) {
-            StaticJsonDocument<256> successDoc;
+            StaticJsonDocument<JSON_DOC_SIZE_SMALL> successDoc;
             successDoc["event"] = "operator_removed";
             successDoc["username"] = username;
             String output;
@@ -1544,7 +1555,7 @@ void handleWebSocketMessage(void *arg, uint8_t *data, size_t len, AsyncWebSocket
         String newPassword = doc["newPassword"] | "";
 
         if (userManager.changePassword(username, oldPassword, newPassword)) {
-            StaticJsonDocument<256> successDoc;
+            StaticJsonDocument<JSON_DOC_SIZE_SMALL> successDoc;
             successDoc["event"] = "password_changed";
             successDoc["message"] = "Password changed successfully";
             String output;
@@ -1556,7 +1567,7 @@ void handleWebSocketMessage(void *arg, uint8_t *data, size_t len, AsyncWebSocket
     } else if (action == "get_operators") {
         std::vector<String> operators = userManager.getOperators();
 
-        StaticJsonDocument<512> opDoc;
+        StaticJsonDocument<JSON_DOC_SIZE_MEDIUM> opDoc;
         opDoc["event"] = "operators_list";
         JsonArray opArray = opDoc.createNestedArray("operators");
         for (const auto& op : operators) {
@@ -1586,7 +1597,7 @@ void handleWebSocketMessage(void *arg, uint8_t *data, size_t len, AsyncWebSocket
             }
         }
 
-        StaticJsonDocument<256> resetDoc;
+        StaticJsonDocument<JSON_DOC_SIZE_SMALL> resetDoc;
         resetDoc["event"] = "factory_reset_complete";
         resetDoc["message"] = "System reset to factory defaults";
         String output;
@@ -1610,7 +1621,7 @@ void handleWebSocketMessage(void *arg, uint8_t *data, size_t len, AsyncWebSocket
 
     } else if (action == "get_helloclub_settings") {
         // Permission already checked in needsAdmin block above
-        StaticJsonDocument<512> settingsDoc;
+        StaticJsonDocument<JSON_DOC_SIZE_MEDIUM> settingsDoc;
         settingsDoc["event"] = "helloclub_settings";
         settingsDoc["apiKey"] = helloClubApiKey.isEmpty() ? "" : "***configured***";
         settingsDoc["enabled"] = helloClubEnabled;
@@ -1639,7 +1650,7 @@ void handleWebSocketMessage(void *arg, uint8_t *data, size_t len, AsyncWebSocket
 
         saveHelloClubSettings();
 
-        StaticJsonDocument<256> successDoc;
+        StaticJsonDocument<JSON_DOC_SIZE_SMALL> successDoc;
         successDoc["event"] = "helloclub_settings_saved";
         successDoc["message"] = "Hello Club settings saved successfully";
         String output;
@@ -1658,7 +1669,7 @@ void handleWebSocketMessage(void *arg, uint8_t *data, size_t len, AsyncWebSocket
             xTaskCreatePinnedToCore(
                 hcFetchTask, "hcFetch", 8192, nullptr, 1, &hcFetchTaskHandle, 0
             );
-            StaticJsonDocument<256> ackDoc;
+            StaticJsonDocument<JSON_DOC_SIZE_SMALL> ackDoc;
             ackDoc["event"] = "helloclub_refresh_result";
             ackDoc["success"] = true;
             ackDoc["message"] = "Sync started, events will update shortly...";
@@ -1670,7 +1681,7 @@ void handleWebSocketMessage(void *arg, uint8_t *data, size_t len, AsyncWebSocket
     // --- QR Config ---
 
     } else if (action == "get_qr_config") {
-        StaticJsonDocument<512> qrDoc;
+        StaticJsonDocument<JSON_DOC_SIZE_MEDIUM> qrDoc;
         qrDoc["event"] = "qr_config";
         // Use override SSID if set, otherwise fall back to connected network SSID
         String ssidOverride = settings.getGuestWifiSsid();
@@ -1695,7 +1706,7 @@ void handleWebSocketMessage(void *arg, uint8_t *data, size_t len, AsyncWebSocket
         }
 
         if (settings.saveQrSettings(pass, enc, ssid)) {
-            StaticJsonDocument<256> successDoc;
+            StaticJsonDocument<JSON_DOC_SIZE_SMALL> successDoc;
             successDoc["event"] = "qr_settings_saved";
             successDoc["message"] = "QR settings saved";
             String output;
@@ -1741,7 +1752,7 @@ void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventTyp
             authenticatedClients[client->id()] = VIEWER;
             clientRateLimits[client->id()] = {millis(), 0};
             clientLastActivity[client->id()] = millis();
-            StaticJsonDocument<256> loginDoc;
+            StaticJsonDocument<JSON_DOC_SIZE_SMALL> loginDoc;
             loginDoc["event"] = "login_prompt";
             loginDoc["message"] = "Welcome! Login for full access or continue as viewer.";
             String output;

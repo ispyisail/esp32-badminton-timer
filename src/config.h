@@ -14,7 +14,6 @@ constexpr int RELAY_PIN = 26;
 // Factory reset button (BOOT button on most ESP32 boards)
 constexpr int FACTORY_RESET_BUTTON_PIN = 0;                   // GPIO 0 (BOOT button)
 constexpr unsigned long FACTORY_RESET_HOLD_TIME_MS = 10000;   // Hold for 10 seconds to factory reset
-constexpr unsigned long BUTTON_DEBOUNCE_MS = 50;              // Button debounce time
 
 // =============================================================================
 // Timer Configuration
@@ -41,9 +40,8 @@ constexpr unsigned long MAX_SIREN_PAUSE_MS = 10000;              // Maximum paus
 // =============================================================================
 
 // WiFi connection settings
-constexpr unsigned long WIFI_CONNECT_TIMEOUT_MS = 10000;         // 10 seconds per network
+constexpr unsigned long WIFI_CONNECT_TIMEOUT_MS = 15000;         // 15 seconds per network
 constexpr unsigned long CAPTIVE_PORTAL_TIMEOUT_SEC = 300;        // 5 minutes captive portal timeout
-constexpr int WIFI_CONNECT_RETRIES = 5;                          // Number of retry attempts
 
 // Captive portal settings
 constexpr const char* AP_SSID = "BadmintonTimerSetup";          // Access point SSID
@@ -59,10 +57,8 @@ constexpr const char* MDNS_HOSTNAME = "badminton-timer";        // mDNS hostname
 // WebSocket sync interval
 constexpr unsigned long SYNC_INTERVAL_MS = 5000;                 // Sync every 5 seconds
 
-// WebSocket reconnection settings
-constexpr int MAX_WEBSOCKET_RECONNECT_ATTEMPTS = 10;             // Maximum reconnection attempts
-constexpr unsigned long MIN_RECONNECT_DELAY_MS = 1000;           // Minimum reconnection delay
-constexpr unsigned long MAX_RECONNECT_DELAY_MS = 30000;          // Maximum reconnection delay
+// WebSocket reconnection is a browser-side concern — see MAX_RECONNECT_ATTEMPTS
+// and the backoff in connectWebSocket() in data/script.js.
 
 // Maximum number of simultaneous WebSocket clients
 constexpr size_t MAX_WEBSOCKET_CLIENTS = 10;                     // Limit concurrent connections

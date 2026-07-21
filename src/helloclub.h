@@ -6,6 +6,7 @@
 #include <Preferences.h>
 #include <vector>
 #include <ezTime.h>
+#include "config.h"
 
 // Cached event from Hello Club API
 struct CachedEvent {
@@ -102,7 +103,7 @@ private:
     std::vector<CachedEvent> stagedEvents;
     volatile bool stagedReady = false;
 
-    static const int HC_MAX_EVENTS = 20;
+    static const int HC_MAX_EVENTS = HELLOCLUB_MAX_CACHED_EVENTS;
     static const char* NVS_NAMESPACE;
     static const char* NVS_EVENTS_KEY;
 
