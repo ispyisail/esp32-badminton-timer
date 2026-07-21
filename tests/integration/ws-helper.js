@@ -1,7 +1,19 @@
 const WebSocket = require('ws');
 
-const PORT = process.env.TEST_SERVER_PORT || 18080;
-const WS_URL = `ws://localhost:${PORT}/ws`;
+/**
+ * Resolved per connection, not at import time: setup-server.js assigns this
+ * file's port in beforeAll, which runs after modules are loaded.
+ */
+function wsUrl() {
+  const port = process.env.TEST_SERVER_PORT;
+  if (!port) {
+    throw new Error(
+      'TEST_SERVER_PORT is not set — integration/setup-server.js should have ' +
+      'started a server in beforeAll. Is setupFilesAfterEnv configured?'
+    );
+  }
+  return `ws://localhost:${port}/ws`;
+}
 
 /**
  * Create a WebSocket connection and collect initial messages.
@@ -9,7 +21,7 @@ const WS_URL = `ws://localhost:${PORT}/ws`;
  */
 function createClient() {
   return new Promise((resolve, reject) => {
-    const ws = new WebSocket(WS_URL);
+    const ws = new WebSocket(wsUrl());
     const messages = [];
     const waiters = [];
 
@@ -108,4 +120,4 @@ async function createAuthenticatedClient(username, password) {
   return client;
 }
 
-module.exports = { createClient, createAuthenticatedClient, WS_URL, PORT };
+module.exports = { createClient, createAuthenticatedClient, wsUrl };

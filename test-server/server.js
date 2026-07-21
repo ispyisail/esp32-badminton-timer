@@ -5,7 +5,10 @@ const https = require('https');
 const os = require('os');
 
 const app = express();
-const PORT = 8080;
+// PORT=0 asks the OS for a free port; the bound port is reported below so a
+// test harness can start an isolated instance without picking one itself.
+const PORT = process.env.PORT !== undefined ? Number(process.env.PORT) : 8080;
+let boundPort = PORT;
 
 // Get LAN IP address
 function getLanIp() {
@@ -25,9 +28,11 @@ const lanIp = getLanIp();
 app.use(express.static(path.join(__dirname, '../data')));
 
 const server = app.listen(PORT, () => {
+    boundPort = server.address().port;
+    console.log(`TEST_SERVER_PORT=${boundPort}`);   // machine-readable, parsed by the test harness
     console.log(`\n🚀 Test Server running!`);
-    console.log(`📱 Local:   http://localhost:${PORT}`);
-    console.log(`📱 Network: http://${lanIp}:${PORT}`);
+    console.log(`📱 Local:   http://localhost:${boundPort}`);
+    console.log(`📱 Network: http://${lanIp}:${boundPort}`);
     console.log(`\n✨ Test credentials:`);
     console.log(`   Admin: username="admin", password="admin"`);
     console.log(`   Operator: username="operator1", password="pass123"`);
@@ -528,7 +533,7 @@ function handleMessage(clientId, ws, msg) {
                 connectedSsid: qrConfig.connectedSsid,
                 password: qrConfig.password,
                 encryption: qrConfig.encryption,
-                appUrl: `http://${lanIp}:${PORT}/`
+                appUrl: `http://${lanIp}:${boundPort}/`
             });
             break;
 

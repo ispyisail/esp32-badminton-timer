@@ -12,8 +12,10 @@ module.exports = {
       displayName: 'integration',
       testMatch: [path.join(__dirname, 'integration/**/*.test.js')],
       testEnvironment: 'node',
-      globalSetup: path.join(__dirname, 'integration/global-setup.js'),
-      globalTeardown: path.join(__dirname, 'integration/global-teardown.js'),
+      // Per-file, not global: each test file gets its own mock-server process
+      // on its own port. A single shared server made results depend on which
+      // suite ran first, because its timer/settings/operator state is global.
+      setupFilesAfterEnv: [path.join(__dirname, 'integration/setup-server.js')],
     },
   ],
 };
