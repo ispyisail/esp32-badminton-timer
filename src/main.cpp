@@ -615,7 +615,7 @@ void loop() {
 
     events(); // ezTime
     ArduinoOTA.handle();
-    ws.cleanupClients();
+    ws.cleanupClients(MAX_WEBSOCKET_CLIENTS);  // default is the library's 8, not our limit
 
     checkAndBroadcastNTPStatus();
     siren.update();
@@ -1717,6 +1717,26 @@ void handleWebSocketMessage(void *arg, uint8_t *data, size_t len, AsyncWebSocket
 void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventType type, void *arg, uint8_t *data, size_t len) {
     switch(type) {
         case WS_EVT_CONNECT: {
+            // The new client is already in the list when this fires, so the
+            // limit is inclusive. Reject newcomers rather than letting
+            // cleanupClients() evict the oldest connection — that would drop
+            // the court display in favour of whoever connected last.
+            if (server->count() > MAX_WEBSOCKET_CLIENTS) {
+                Serial.printf("WebSocket client #%u rejected — %u client limit reached\n",
+                              client->id(), (unsigned)MAX_WEBSOCKET_CLIENTS);
+                // Throttled: bootLog() writes to SPIFFS, and a client that
+                // retries in a loop would otherwise hammer flash from the
+                // async TCP task.
+                static unsigned long lastRejectLog = 0;
+                if (lastRejectLog == 0 || millis() - lastRejectLog >= 60000) {
+                    lastRejectLog = millis();
+                    bootLog("WS: rejecting clients, limit of %u reached",
+                            (unsigned)MAX_WEBSOCKET_CLIENTS);
+                }
+                client->close(1013, "Too many clients");  // 1013 = Try Again Later
+                return;
+            }
+
             Serial.printf("WebSocket client #%u connected from %s\n", client->id(), client->remoteIP().toString().c_str());
             authenticatedClients[client->id()] = VIEWER;
             clientRateLimits[client->id()] = {millis(), 0};
