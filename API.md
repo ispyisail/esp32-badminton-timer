@@ -186,147 +186,6 @@ All messages are JSON objects with an `event` (server->client) or `action` (clie
 
 ---
 
-### Schedule Management Actions
-
-#### get_schedules
-**Purpose**: Retrieve all schedules (filtered by role)
-
-```json
-{
-  "action": "get_schedules"
-}
-```
-
-**Permission**: Any authenticated user
-**Response**: `schedules_list` event
-
-**Filtering**:
-- ADMIN: Receives all schedules from all clubs
-- OPERATOR: Receives only schedules where `ownerUsername` matches their username
-- VIEWER: Receives all schedules (read-only)
-
----
-
-#### add_schedule
-**Purpose**: Create a new schedule
-
-```json
-{
-  "action": "add_schedule",
-  "schedule": {
-    "clubName": "Badminton Club A",
-    "dayOfWeek": 1,
-    "startHour": 18,
-    "startMinute": 30,
-    "durationMinutes": 90,
-    "enabled": true
-  }
-}
-```
-
-| Field | Type | Range | Description |
-|-------|------|-------|-------------|
-| `clubName` | string | non-empty | Club/group name |
-| `dayOfWeek` | number | 0-6 | 0=Sunday, 1=Monday, ..., 6=Saturday |
-| `startHour` | number | 0-23 | Start hour |
-| `startMinute` | number | 0-59 | Start minute |
-| `durationMinutes` | number | >0 | Duration in minutes |
-| `enabled` | boolean | | Whether this schedule is active |
-
-**Permission**: OPERATOR or ADMIN required
-
-**Server Behavior**:
-- Generates unique schedule ID (timestamp + counter)
-- Sets `ownerUsername` to authenticated user's username (NOT from client!)
-- Sets `createdAt` timestamp
-
-**Response**: `schedule_added` event to requester only
-
-**Errors**:
-- "Permission denied - viewer mode"
-- "Invalid day of week (must be 0-6)"
-- "Invalid hour (must be 0-23)"
-- "Invalid minute (must be 0-59)"
-- "Missing schedule data"
-
----
-
-#### update_schedule
-**Purpose**: Update an existing schedule
-
-```json
-{
-  "action": "update_schedule",
-  "schedule": {
-    "id": "1698765432-1",
-    "clubName": "Badminton Club A",
-    "dayOfWeek": 2,
-    "startHour": 19,
-    "startMinute": 0,
-    "durationMinutes": 120,
-    "enabled": true
-  }
-}
-```
-
-**Permission**: OPERATOR (own schedules only) or ADMIN (all schedules)
-**Validation**: Same as `add_schedule` plus:
-- Schedule with `id` must exist
-- OPERATOR can only update schedules where `ownerUsername` matches their username
-- ADMIN can update any schedule
-
-**Server Behavior**:
-- Preserves `ownerUsername` from existing schedule (client cannot change ownership!)
-- Preserves `createdAt` timestamp
-- Updates all other fields from client
-
-**Response**: `schedule_updated` event to requester only
-
-**Errors**:
-- "Schedule not found"
-- "Permission denied - you can only edit your own schedules"
-- Validation errors same as `add_schedule`
-
----
-
-#### delete_schedule
-**Purpose**: Delete a schedule
-
-```json
-{
-  "action": "delete_schedule",
-  "id": "1698765432-1"
-}
-```
-
-**Permission**: OPERATOR (own schedules only) or ADMIN (all schedules)
-**Response**: `schedule_deleted` event to requester only
-
-**Errors**:
-- "Schedule not found"
-- "Permission denied - you can only delete your own schedules"
-
----
-
-#### set_scheduling
-**Purpose**: Enable or disable the automatic scheduling system
-
-```json
-{
-  "action": "set_scheduling",
-  "enabled": true
-}
-```
-
-**Permission**: OPERATOR or ADMIN required
-**Response**: `scheduling_status` event broadcast to all clients
-
-**Behavior**:
-- When `enabled=true`: ESP32 checks every minute if any schedule should trigger
-- When `enabled=false`: Schedules are not checked, timer must be started manually
-
----
-
 ### User Management Actions
 
 #### get_operators
@@ -387,8 +246,6 @@ All messages are JSON objects with an `event` (server->client) or `action` (clie
 - "Permission denied - admin only"
 - "Operator not found"
 
-**Note**: This does NOT delete schedules created by that operator. Schedules remain with their `ownerUsername`.
-
 ---
 
 #### change_password
@@ -407,19 +264,19 @@ All messages are JSON objects with an `event` (server->client) or `action` (clie
 |-------|------|-------------|
 | `username` | string | The username whose password to change |
 | `oldPassword` | string | Must match the current password |
-| `newPassword` | string | Minimum 4 characters for operators, no minimum for admin |
+| `newPassword` | string | Minimum 5 characters (`MIN_PASSWORD_LENGTH`), admin included |
 
 **Permission**: OPERATOR or ADMIN
 **Response**: `password_changed` event
 
 **Errors**:
 - "ERR_PASSWORD_CHANGE: Old password is incorrect"
-- "Password must be at least 4 characters"
+- "Password must be at least 5 characters"
 
 ---
 
 #### factory_reset
-**Purpose**: Reset all settings, users, and schedules to defaults
+**Purpose**: Reset all settings and users to defaults
 
 ```json
 {
@@ -430,9 +287,9 @@ All messages are JSON objects with an `event` (server->client) or `action` (clie
 **Permission**: ADMIN only
 **Behavior**:
 - Deletes all operator accounts
-- Deletes all schedules
 - Resets admin password to "admin"
-- Disables scheduling
+- Clears Hello Club settings and the cached event list
+- Clears WiFi credentials captured by the captive portal
 - Resets all settings to defaults
 
 **Response**: `factory_reset_complete` event
@@ -820,117 +677,6 @@ All messages are JSON objects with an `event` (server->client) or `action` (clie
 
 ---
 
-### Schedule Events
-
-#### schedules_list
-**When**: Response to `get_schedules` action or after authentication
-
-```json
-{
-  "event": "schedules_list",
-  "schedules": [
-    {
-      "id": "1698765432-1",
-      "clubName": "Badminton Club A",
-      "ownerUsername": "operator1",
-      "dayOfWeek": 1,
-      "startHour": 18,
-      "startMinute": 30,
-      "durationMinutes": 90,
-      "enabled": true,
-      "createdAt": 1698765432
-    }
-  ]
-}
-```
-
-**Filtering**:
-- ADMIN: All schedules
-- OPERATOR: Only schedules where `ownerUsername` matches
-- VIEWER: All schedules
-
----
-
-#### schedule_added
-**When**: Schedule successfully created
-
-```json
-{
-  "event": "schedule_added",
-  "schedule": {
-    "id": "1698765432-1",
-    "clubName": "Badminton Club A",
-    "ownerUsername": "operator1",
-    "dayOfWeek": 1,
-    "startHour": 18,
-    "startMinute": 30,
-    "durationMinutes": 90,
-    "enabled": true,
-    "createdAt": 1698765432
-  }
-}
-```
-
-**Sent to**: Requester only
-**Client Action**: Add schedule to local array, re-render calendar
-
----
-
-#### schedule_updated
-**When**: Schedule successfully updated
-
-```json
-{
-  "event": "schedule_updated",
-  "schedule": {
-    "id": "1698765432-1",
-    "clubName": "Badminton Club A (Updated)",
-    "ownerUsername": "operator1",
-    "dayOfWeek": 2,
-    "startHour": 19,
-    "startMinute": 0,
-    "durationMinutes": 120,
-    "enabled": true,
-    "createdAt": 1698765432
-  }
-}
-```
-
-**Sent to**: Requester only
-**Client Action**: Update schedule in local array, re-render calendar
-
----
-
-#### schedule_deleted
-**When**: Schedule successfully deleted
-
-```json
-{
-  "event": "schedule_deleted",
-  "id": "1698765432-1"
-}
-```
-
-**Sent to**: Requester only
-**Client Action**: Remove schedule from local array, re-render calendar
-
----
-
-#### scheduling_status
-**When**: Scheduling system enabled/disabled
-
-```json
-{
-  "event": "scheduling_status",
-  "enabled": true
-}
-```
-
-**Sent to**: All clients (broadcast)
-**Client Action**: Update toggle switch UI
-
----
-
 ### User Management Events
 
 #### operators_list
@@ -1286,16 +1032,12 @@ All messages are JSON objects with an `event` (server->client) or `action` (clie
 | "ERR_AUTH_FAILED: Invalid username or password" | Wrong credentials | Check username/password, verify operator account exists |
 | "ERR_RATE_LIMIT: Too many requests. Please slow down." | >10 messages/second | Reduce message frequency |
 | "ERR_PASSWORD_CHANGE: Old password is incorrect" | Wrong old password in change_password | Verify current password |
-| "Permission denied - viewer mode" | Viewer attempting control action | Login as operator or admin |
-| "Permission denied - admin only" | Non-admin attempting admin action | Login as admin |
-| "Permission denied - you can only edit your own schedules" | Operator editing another operator's schedule | Only admins can edit all schedules |
+| "ERR_INVALID_JSON: Invalid message format" | Malformed JSON payload | Check the message is valid JSON |
+| "Operator access required" | Viewer attempting a control action | Login as operator or admin |
+| "Admin access required" | Non-admin attempting an admin action | Login as admin |
 | "Timer already active. Reset first." | Start attempted while RUNNING/PAUSED | Reset timer first |
-| "Schedule not found" | Invalid schedule ID | Refresh schedules list |
-| "Invalid day of week (must be 0-6)" | dayOfWeek out of range | Use 0 (Sunday) through 6 (Saturday) |
-| "Invalid hour (must be 0-23)" | startHour out of range | Use 0-23 |
-| "Invalid minute (must be 0-59)" | startMinute out of range | Use 0-59 |
 | "Username already exists" | Duplicate operator username | Choose different username |
-| "Password must be at least 4 characters" | Password too short | Use longer password |
+| "Password must be at least 5 characters" | Shorter than `MIN_PASSWORD_LENGTH` | Use a longer password |
 | "Maximum number of operators reached" | 10 operators already exist | Remove unused operators first |
 
 ---
@@ -1311,22 +1053,18 @@ All messages are JSON objects with an `event` (server->client) or `action` (clie
 5. **Validate before sending** - Check inputs before sending actions
 6. **Show feedback** - Display errors and success messages
 7. **Respect roles** - Hide/disable controls based on user role
-8. **Nest schedule data** - Always send schedules under `{ schedule: {...} }` key
-9. **Never send `ownerUsername`** - Server sets this automatically
-10. **Check NTP status** - Warn users if time not synced before using schedules
+8. **Check NTP status** - Warn users if time is not synced; Hello Club auto-triggering depends on it
 
 ### Server-Side
 
 1. **Always validate input** - Check all fields for valid ranges
 2. **Check authentication** - Verify client role for all control actions
-3. **Check permissions** - Verify ownership for schedule operations
-4. **Broadcast state changes** - Send events to ALL clients (not just requester)
-5. **Handle errors gracefully** - Send error messages with ERR_ codes
-6. **Log important events** - Use DEBUG macros for troubleshooting
-7. **Rate limit** - Enforce 10 messages/second per client
-8. **Enforce ownership** - Never accept `ownerUsername` from client
-9. **Session timeout** - Check inactivity every 60 seconds
-10. **Clean up on disconnect** - Remove client from all tracking maps
+3. **Broadcast state changes** - Send events to ALL clients (not just requester)
+4. **Handle errors gracefully** - Send error messages with ERR_ codes
+5. **Log important events** - Use DEBUG macros for troubleshooting
+6. **Rate limit** - Enforce 10 messages/second per client
+7. **Session timeout** - Check inactivity every 60 seconds
+8. **Clean up on disconnect** - Remove client from all tracking maps
 
 ---
 
@@ -1365,17 +1103,6 @@ socket.onmessage = (event) => {
             userRole = 'viewer';
             disableControls();
             showNotification('Session expired - Login again or continue as viewer');
-            break;
-
-        case 'schedules_list':
-            schedules = data.schedules;
-            renderCalendar();
-            break;
-
-        case 'schedule_added':
-            schedules.push(data.schedule);
-            renderCalendar();
-            showNotification('Schedule added successfully');
             break;
 
         case 'pause_after_next_changed':
@@ -1421,35 +1148,17 @@ function continueAsViewer() {
 }
 ```
 
-### Manage Schedules
+### Upcoming Bookings
 
 ```javascript
-function addSchedule(clubName, dayOfWeek, startHour, startMinute, duration) {
-    socket.send(JSON.stringify({
-        action: 'add_schedule',
-        schedule: {
-            clubName: clubName,
-            dayOfWeek: dayOfWeek,
-            startHour: startHour,
-            startMinute: startMinute,
-            durationMinutes: duration,
-            enabled: true
-        }
-    }));
+function getUpcomingEvents() {
+    socket.send(JSON.stringify({ action: 'get_upcoming_events' }));
 }
 
-function updateSchedule(schedule) {
-    socket.send(JSON.stringify({
-        action: 'update_schedule',
-        schedule: schedule  // Must include id
-    }));
-}
-
-function deleteSchedule(scheduleId) {
-    socket.send(JSON.stringify({
-        action: 'delete_schedule',
-        id: scheduleId
-    }));
+// Force an immediate poll of the Hello Club API instead of waiting
+// for the hourly refresh. OPERATOR or ADMIN.
+function refreshBookings() {
+    socket.send(JSON.stringify({ action: 'helloclub_refresh' }));
 }
 ```
 
@@ -1488,11 +1197,12 @@ function removeOperator(username) {
 - Try hard refresh (Ctrl+Shift+R)
 - Check serial monitor for auth logs
 
-### Schedules not triggering
+### Bookings not auto-starting
 - Check NTP status shows synced (green checkmark)
-- Verify scheduling toggle is ON
-- Check schedule time matches configured timezone
-- Wait 2 minutes after last trigger (cooldown)
+- Verify Hello Club is enabled and an API key is configured
+- Check the booking time matches the configured timezone
+- Bookings are polled hourly — send `helloclub_refresh` to fetch immediately
+- A booking only triggers within a 2-minute window of its start time (`HELLOCLUB_TRIGGER_WINDOW_MS`)
 
 ### Rate limit errors
 - Reduce frequency of WebSocket messages
