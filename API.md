@@ -88,7 +88,7 @@ All messages are JSON objects with an `event` (server->client) or `action` (clie
 
 **Errors**:
 - "Timer already active. Reset first." (if RUNNING/PAUSED)
-- "Permission denied - viewer mode" (if VIEWER)
+- "Operator access required" (if VIEWER)
 
 ---
 
@@ -216,15 +216,15 @@ All messages are JSON objects with an `event` (server->client) or `action` (clie
 **Permission**: ADMIN only
 **Validation**:
 - `username`: Required, non-empty, unique
-- `password`: Minimum 4 characters
-- Maximum 10 operators
+- `password`: Minimum 5 characters (`MIN_PASSWORD_LENGTH`)
+- Maximum 10 operators (`MAX_OPERATORS`)
 
 **Response**: `operator_added` event
 
 **Errors**:
-- "Permission denied - admin only"
+- "Admin access required"
 - "Username already exists"
-- "Password must be at least 4 characters"
+- "Password must be at least 5 characters"
 - "Maximum number of operators reached"
 
 ---
@@ -243,7 +243,7 @@ All messages are JSON objects with an `event` (server->client) or `action` (clie
 **Response**: `operator_removed` event
 
 **Errors**:
-- "Permission denied - admin only"
+- "Admin access required"
 - "Operator not found"
 
 ---
@@ -270,8 +270,7 @@ All messages are JSON objects with an `event` (server->client) or `action` (clie
 **Response**: `password_changed` event
 
 **Errors**:
-- "ERR_PASSWORD_CHANGE: Old password is incorrect"
-- "Password must be at least 5 characters"
+- "Failed to change password. Check credentials." (wrong old password, or new password too short)
 
 ---
 
@@ -401,6 +400,28 @@ All messages are JSON objects with an `event` (server->client) or `action` (clie
 
 **Permission**: ADMIN only
 **Response**: `qr_settings_saved` event
+
+---
+
+### Diagnostic Actions
+
+#### get_remote_log
+**Purpose**: Retrieve the in-memory diagnostic log
+
+```json
+{
+  "action": "get_remote_log"
+}
+```
+
+**Permission**: ADMIN only
+**Response**: `remote_log` event to requester only
+
+**Notes**:
+- The log is a RAM ring buffer that does not survive a reboot. For the
+  reboot-persistent log, fetch `GET /log` instead (also admin-only, HTTP
+  Basic auth).
+- The same payload is available over HTTP at `GET /diag`.
 
 ---
 
@@ -1004,6 +1025,33 @@ All messages are JSON objects with an `event` (server->client) or `action` (clie
 
 ---
 
+### Diagnostic Events
+
+#### remote_log
+**When**: Response to the `get_remote_log` action
+
+```json
+{
+  "event": "remote_log",
+  "seq": 142,
+  "entries": [
+    { "t": 18342, "m": "HC poll OK: 3 events cached" },
+    { "t": 21005, "m": "WiFi: Reconnected after 32 sec" }
+  ]
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `seq` | number | Total entries logged since boot; exceeds `entries.length` once the ring buffer wraps |
+| `entries[].t` | number | `millis()` at the time of logging, not a wall-clock time |
+| `entries[].m` | string | Log message |
+
+**Sent to**: Requester only (ADMIN)
+**Note**: Entries are ordered oldest to newest.
+
+---
+
 ### Error Event
 
 #### error
@@ -1016,12 +1064,11 @@ All messages are JSON objects with an `event` (server->client) or `action` (clie
 }
 ```
 
-**Error Codes**:
+**Error Codes**: only three messages carry an `ERR_` prefix. Everything else is
+a plain-text message — match on the full string, not on a prefix.
 - `ERR_AUTH_FAILED`: Authentication failed
 - `ERR_RATE_LIMIT`: Too many requests (>10/second)
-- `ERR_PASSWORD_CHANGE`: Old password incorrect
-- `ERR_PERMISSION`: Permission denied
-- Other errors: Plain text messages
+- `ERR_INVALID_JSON`: Message was not valid JSON
 
 ---
 
@@ -1031,7 +1078,7 @@ All messages are JSON objects with an `event` (server->client) or `action` (clie
 |--------------|-------|----------|
 | "ERR_AUTH_FAILED: Invalid username or password" | Wrong credentials | Check username/password, verify operator account exists |
 | "ERR_RATE_LIMIT: Too many requests. Please slow down." | >10 messages/second | Reduce message frequency |
-| "ERR_PASSWORD_CHANGE: Old password is incorrect" | Wrong old password in change_password | Verify current password |
+| "Failed to change password. Check credentials." | Wrong old password, or new password below the 5-character minimum | Verify current password and length |
 | "ERR_INVALID_JSON: Invalid message format" | Malformed JSON payload | Check the message is valid JSON |
 | "Operator access required" | Viewer attempting a control action | Login as operator or admin |
 | "Admin access required" | Non-admin attempting an admin action | Login as admin |
