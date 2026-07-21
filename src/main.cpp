@@ -324,6 +324,23 @@ button:hover{background:#c73e54}
             bootLog("Portal: Trying to connect to '%s'...", savedSSID.c_str());
             if (tryWiFiNetwork(savedSSID.c_str(), savedPassword.c_str())) {
                 bootLog("Portal: Connected to '%s'", savedSSID.c_str());
+
+                // Persist so the next boot can reach this network — it is not
+                // in known_networks[].
+                Preferences wifiPrefs;
+                if (wifiPrefs.begin(WIFI_PREFS_NAMESPACE, false)) {
+                    wifiPrefs.putString("ssid", savedSSID);
+                    wifiPrefs.putString("pass", savedPassword);
+                    wifiPrefs.end();
+                }
+
+                // The portal's "/" and onNotFound handlers stay registered
+                // after server.end() and would shadow the app's routes,
+                // leaving the UI unreachable. Reboot into a clean server —
+                // which is what the success page already promised the user.
+                bootLog("Portal: Restarting to serve the app");
+                delay(2000);
+                ESP.restart();
             } else {
                 bootLog("Portal: Failed to connect to '%s', restarting", savedSSID.c_str());
                 delay(2000);
@@ -472,6 +489,12 @@ void loop() {
                 prefs.begin("helloclub", false);
                 prefs.clear();
                 prefs.end();
+
+                // Clear portal-configured WiFi so setup starts from scratch
+                Preferences wifiPrefs;
+                wifiPrefs.begin(WIFI_PREFS_NAMESPACE, false);
+                wifiPrefs.clear();
+                wifiPrefs.end();
 
                 DEBUG_PRINTLN("Factory reset complete. Restarting in 3 seconds...");
                 delay(3000);
@@ -919,6 +942,24 @@ bool connectToKnownWiFi() {
     Serial.println("Trying to connect to a known WiFi network...");
     WiFi.mode(WIFI_STA);
     WiFi.setAutoReconnect(true);
+
+    // Credentials saved by a previous captive-portal setup are tried first —
+    // they are not compiled into known_networks[].
+    String portalSsid, portalPass;
+    {
+        Preferences wifiPrefs;
+        if (wifiPrefs.begin(WIFI_PREFS_NAMESPACE, true)) {
+            portalSsid = wifiPrefs.getString("ssid", "");
+            portalPass = wifiPrefs.getString("pass", "");
+            wifiPrefs.end();
+        }
+    }
+    if (!portalSsid.isEmpty()) {
+        bootLog("WiFi: Trying portal-configured network '%s'", portalSsid.c_str());
+        if (tryWiFiNetwork(portalSsid.c_str(), portalPass.c_str())) {
+            return true;
+        }
+    }
 
     bootLog("WiFi: Scanning for networks...");
     int numFound = WiFi.scanNetworks();

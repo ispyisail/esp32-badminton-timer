@@ -83,6 +83,9 @@ constexpr size_t JSON_DOC_SIZE_LARGE = 1024;                     // For complex 
 // Preferences namespace
 constexpr const char* PREFERENCES_NAMESPACE = "timer";
 
+// Namespace for WiFi credentials captured by the captive portal
+constexpr const char* WIFI_PREFS_NAMESPACE = "wifi";
+
 // Preferences keys
 constexpr const char* PREF_KEY_GAME_DURATION = "gameDuration";
 constexpr const char* PREF_KEY_NUM_ROUNDS = "numRounds";
