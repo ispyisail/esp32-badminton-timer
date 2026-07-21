@@ -514,9 +514,17 @@ void loop() {
             if (downTime > 120000) {
                 DEBUG_PRINTLN("WiFi: Auto-reconnect failed, forcing reconnect...");
                 bootLog("WiFi: Forcing reconnect after %lu sec", downTime / 1000);
-                WiFi.disconnect(true);
+                // disconnect(true) powers the radio down, and reconnect() bails
+                // out when the mode is not STA — that combination left the
+                // device offline until a power cycle. Keep the radio on.
+                WiFi.disconnect(false);
                 delay(200);
-                WiFi.reconnect();
+                WiFi.mode(WIFI_STA);
+                WiFi.setHostname(MDNS_HOSTNAME);
+                if (!WiFi.reconnect()) {
+                    bootLog("WiFi: reconnect() refused, retrying with stored config");
+                    WiFi.begin();
+                }
                 wifiDownSince = millis(); // Reset timer for next attempt
             }
         } else if (wifiDownSince > 0) {
