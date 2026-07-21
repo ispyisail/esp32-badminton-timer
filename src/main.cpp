@@ -19,6 +19,7 @@
 #include "helloclub.h"
 #include "remotelog.h"
 #include "esp_system.h"
+#include "mbedtls/base64.h"
 
 // ==========================================================================
 // --- Boot Logger (persists to SPIFFS across reboots) ---
@@ -175,6 +176,53 @@ void saveHelloClubSettings();
 void checkHelloClubPoll();
 void hcFetchTask(void* param);
 bool sirenAllowed();
+
+// ==========================================================================
+// --- HTTP Authentication ---
+// ==========================================================================
+
+// Resolve HTTP Basic credentials against the same user database the WebSocket
+// API uses. Returns VIEWER when the header is missing, malformed, or wrong.
+// Passwords are stored as SHA-256 hashes, so the framework's own
+// request->authenticate() (which needs the plaintext, or an MD5 digest hash)
+// cannot be used here.
+static UserRole httpBasicAuthRole(AsyncWebServerRequest* request) {
+    if (!request->hasHeader("Authorization")) return VIEWER;
+
+    String header = request->header("Authorization");
+    if (!header.startsWith("Basic ")) return VIEWER;
+
+    String encoded = header.substring(6);
+    encoded.trim();
+
+    // Bounded: "user:password" well under 128 bytes for this device's limits
+    unsigned char decoded[128];
+    size_t decodedLen = 0;
+    if (mbedtls_base64_decode(decoded, sizeof(decoded) - 1, &decodedLen,
+                              (const unsigned char*)encoded.c_str(), encoded.length()) != 0) {
+        return VIEWER;
+    }
+    decoded[decodedLen] = '\0';
+
+    String credentials = String((char*)decoded);
+    int separator = credentials.indexOf(':');
+    if (separator < 0) return VIEWER;
+
+    return userManager.authenticate(credentials.substring(0, separator),
+                                    credentials.substring(separator + 1));
+}
+
+// Gate an admin-only HTTP endpoint. Sends a 401 challenge and returns false
+// when the caller is not an admin.
+static bool requireAdmin(AsyncWebServerRequest* request) {
+    if (httpBasicAuthRole(request) == ADMIN) return true;
+
+    AsyncWebServerResponse* response =
+        request->beginResponse(401, "text/plain", "Admin access required");
+    response->addHeader("WWW-Authenticate", "Basic realm=\"Badminton Timer\"");
+    request->send(response);
+    return false;
+}
 
 // ==========================================================================
 // --- Setup ---
@@ -387,7 +435,10 @@ button:hover{background:#c73e54}
         setupOTA();
     }
 
+    // Diagnostic endpoints are admin-only — they expose network details and,
+    // in the case of /clear-triggers, change auto-trigger state.
     server.on("/log", HTTP_GET, [](AsyncWebServerRequest *request){
+        if (!requireAdmin(request)) return;
         if (SPIFFS.exists(BOOT_LOG_PATH)) {
             request->send(SPIFFS, BOOT_LOG_PATH, "text/plain");
         } else {
@@ -396,16 +447,19 @@ button:hover{background:#c73e54}
     });
 
     server.on("/log/clear", HTTP_GET, [](AsyncWebServerRequest *request){
+        if (!requireAdmin(request)) return;
         SPIFFS.remove(BOOT_LOG_PATH);
         request->send(200, "text/plain", "Boot log cleared.");
     });
 
     server.on("/diag", HTTP_GET, [](AsyncWebServerRequest *request){
+        if (!requireAdmin(request)) return;
         String json = remoteLogGetAllJson();
         request->send(200, "application/json", json);
     });
 
     server.on("/clear-triggers", HTTP_GET, [](AsyncWebServerRequest *request){
+        if (!requireAdmin(request)) return;
         helloClubClient.clearAllTriggered();
         remoteLog("Cleared all triggered flags via /clear-triggers");
         request->send(200, "text/plain", "Triggered flags cleared.");
