@@ -152,6 +152,9 @@ bool bootRecoveryAttempted = false;
 // ==========================================================================
 
 bool connectToKnownWiFi();
+static bool tryWiFiNetwork(const char* ssid, const char* password);
+void startMDNS();
+void restartMDNS();
 void sendEvent(const String& type);
 void sendStateUpdate(AsyncWebSocketClient *client = nullptr);
 void sendSettingsUpdate(AsyncWebSocketClient *client = nullptr);
@@ -319,24 +322,8 @@ button:hover{background:#c73e54}
 
         if (portalDone && savedSSID.length() > 0) {
             bootLog("Portal: Trying to connect to '%s'...", savedSSID.c_str());
-            WiFi.mode(WIFI_STA);
-            delay(200);
-            if (savedPassword.length() > 0) {
-                WiFi.begin(savedSSID.c_str(), savedPassword.c_str());
-            } else {
-                WiFi.begin(savedSSID.c_str());
-            }
-
-            unsigned long start = millis();
-            while (WiFi.status() != WL_CONNECTED && millis() - start < 15000) {
-                esp_task_wdt_reset();
-                delay(500);
-                Serial.print(".");
-            }
-            Serial.println();
-
-            if (WiFi.status() == WL_CONNECTED) {
-                bootLog("Portal: Connected to '%s' IP: %s", savedSSID.c_str(), WiFi.localIP().toString().c_str());
+            if (tryWiFiNetwork(savedSSID.c_str(), savedPassword.c_str())) {
+                bootLog("Portal: Connected to '%s'", savedSSID.c_str());
             } else {
                 bootLog("Portal: Failed to connect to '%s', restarting", savedSSID.c_str());
                 delay(2000);
@@ -377,12 +364,11 @@ button:hover{background:#c73e54}
         bootLog("Watchdog: Enabled (%lu sec timeout)", WATCHDOG_TIMEOUT_SEC);
     }
 
-    setupOTA();
+    startMDNS();
 
-    if (!MDNS.begin("badminton-timer")) {
-        Serial.println("Error setting up MDNS responder!");
+    if (ENABLE_OTA) {
+        setupOTA();
     }
-    MDNS.addService("http", "tcp", 80);
 
     server.on("/log", HTTP_GET, [](AsyncWebServerRequest *request){
         if (SPIFFS.exists(BOOT_LOG_PATH)) {
@@ -537,6 +523,7 @@ void loop() {
             unsigned long downTime = millis() - wifiDownSince;
             DEBUG_PRINTF("WiFi: Reconnected after %lu seconds\n", downTime / 1000);
             bootLog("WiFi: Reconnected after %lu sec", downTime / 1000);
+            restartMDNS();  // responder goes deaf across a reconnect
             wifiDownSince = 0;
         }
     }
@@ -842,6 +829,84 @@ void loop() {
 // --- Core Functions ---
 // ==========================================================================
 
+// Start the mDNS responder so the timer answers to <MDNS_HOSTNAME>.local.
+// Call after WiFi is connected — mDNS needs a bound STA interface.
+void startMDNS() {
+    if (!ENABLE_MDNS) return;
+
+    if (MDNS.begin(MDNS_HOSTNAME)) {
+        MDNS.setInstanceName("Badminton Court Timer");
+        MDNS.addService("http", "tcp", 80);
+        bootLog("mDNS: responding at http://%s.local", MDNS_HOSTNAME);
+    } else {
+        bootLog("mDNS: FAILED to start responder");
+    }
+}
+
+// The responder stops answering after a WiFi drop/rejoin, so it has to be torn
+// down and rebuilt once the link is back.
+void restartMDNS() {
+    if (!ENABLE_MDNS) return;
+
+    MDNS.end();
+    startMDNS();
+
+    // MDNS.end() also drops ArduinoOTA's service record, and ArduinoOTA::begin()
+    // is a no-op once initialised, so re-advertise it here.
+    if (ENABLE_OTA) {
+        MDNS.enableArduino(3232, strlen(OTA_PASSWORD) > 0);  // 3232 = ArduinoOTA default port
+    }
+}
+
+// Attempt a single network. Returns true once connected.
+static bool tryWiFiNetwork(const char* ssid, const char* password) {
+    WiFi.disconnect(true);
+    delay(200);
+
+    // disconnect(true) powers the radio down, which drops the mode to
+    // WIFI_MODE_NULL and makes setHostname() fail — restore STA first. The
+    // hostname must be set before begin() so it goes out in the DHCP request
+    // (option 12) and the router publishes it in local DNS.
+    WiFi.mode(WIFI_STA);
+    WiFi.setHostname(MDNS_HOSTNAME);
+
+    if (strlen(password) > 0) {
+        WiFi.begin(ssid, password);
+    } else {
+        WiFi.begin(ssid);
+    }
+
+    unsigned long startAttemptTime = millis();
+    while (WiFi.status() != WL_CONNECTED && millis() - startAttemptTime < 15000) {
+        esp_task_wdt_reset();
+        delay(500);
+        Serial.print(".");
+    }
+    Serial.println();
+
+    if (WiFi.status() == WL_CONNECTED) {
+        const char* appliedHostname = WiFi.getHostname();
+        bootLog("WiFi: Connected to '%s' IP: %s hostname: %s", ssid,
+            WiFi.localIP().toString().c_str(),
+            appliedHostname ? appliedHostname : "(unset)");
+        return true;
+    }
+
+    int status = WiFi.status();
+    const char* statusStr;
+    switch(status) {
+        case WL_NO_SSID_AVAIL: statusStr = "NO_SSID_AVAIL"; break;
+        case WL_CONNECT_FAILED: statusStr = "CONNECT_FAILED"; break;
+        case WL_CONNECTION_LOST: statusStr = "CONNECTION_LOST"; break;
+        case WL_DISCONNECTED: statusStr = "DISCONNECTED"; break;
+        case WL_IDLE_STATUS: statusStr = "IDLE"; break;
+        default: statusStr = "UNKNOWN"; break;
+    }
+    bootLog("WiFi: '%s' FAILED - status: %d (%s)", ssid, status, statusStr);
+    WiFi.disconnect(true);
+    return false;
+}
+
 bool connectToKnownWiFi() {
     Serial.println("Trying to connect to a known WiFi network...");
     WiFi.mode(WIFI_STA);
@@ -861,39 +926,8 @@ bool connectToKnownWiFi() {
         const WiFiCredential& cred = known_networks[i];
         bootLog("WiFi: Trying '%s' (attempt 1/1)", cred.ssid);
 
-        WiFi.disconnect(true);
-        delay(200);
-
-        if (strlen(cred.password) > 0) {
-            WiFi.begin(cred.ssid, cred.password);
-        } else {
-            WiFi.begin(cred.ssid);
-        }
-
-        unsigned long startAttemptTime = millis();
-        while (WiFi.status() != WL_CONNECTED && millis() - startAttemptTime < 15000) {
-            esp_task_wdt_reset();
-            delay(500);
-            Serial.print(".");
-        }
-        Serial.println();
-
-        if (WiFi.status() == WL_CONNECTED) {
-            bootLog("WiFi: Connected to '%s' IP: %s", cred.ssid, WiFi.localIP().toString().c_str());
+        if (tryWiFiNetwork(cred.ssid, cred.password)) {
             return true;
-        } else {
-            int status = WiFi.status();
-            const char* statusStr;
-            switch(status) {
-                case WL_NO_SSID_AVAIL: statusStr = "NO_SSID_AVAIL"; break;
-                case WL_CONNECT_FAILED: statusStr = "CONNECT_FAILED"; break;
-                case WL_CONNECTION_LOST: statusStr = "CONNECTION_LOST"; break;
-                case WL_DISCONNECTED: statusStr = "DISCONNECTED"; break;
-                case WL_IDLE_STATUS: statusStr = "IDLE"; break;
-                default: statusStr = "UNKNOWN"; break;
-            }
-            bootLog("WiFi: '%s' FAILED - status: %d (%s)", cred.ssid, status, statusStr);
-            WiFi.disconnect(true);
         }
     }
     return false;
