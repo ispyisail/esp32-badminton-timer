@@ -34,7 +34,11 @@ describe('Permission Enforcement', () => {
       viewer.send({ action, ...extra });
 
       const error = await viewer.waitForEvent('error');
-      expect(error.message).toMatch(/Permission denied/i);
+      // These actions sit at different tiers, and denials are worded per tier
+      // ("Operator access required" vs "Admin access required"); the mock also
+      // still says "Permission denied" for the operator-gated ones. What
+      // matters here is that the action was refused.
+      expect(error.message).toMatch(/permission denied|access required/i);
     });
   });
 
@@ -54,6 +58,11 @@ describe('Permission Enforcement', () => {
       { action: 'get_helloclub_settings', desc: 'get HC settings' },
       { action: 'save_helloclub_settings', desc: 'save HC settings', extra: {} },
       { action: 'save_qr_settings', desc: 'save QR settings', extra: {} },
+      // save_settings is ADMIN-only too, but it is covered by a dedicated test
+      // in settings.test.js rather than added here — these suites share one
+      // mock server with mutable global state, and adding an entry to this
+      // list perturbs execution order enough to break unrelated auth and
+      // user-management tests.
     ];
 
     test.each(adminOnlyActions)('operator cannot $desc', async ({ action, extra }) => {
@@ -61,7 +70,9 @@ describe('Permission Enforcement', () => {
       operator.send({ action, ...extra });
 
       const error = await operator.waitForEvent('error');
-      expect(error.message).toMatch(/Admin only/i);
+      // The mock says "Admin only" for most of these and "Admin access
+      // required" for save_settings; the firmware says the latter throughout.
+      expect(error.message).toMatch(/admin (only|access required)/i);
     });
   });
 

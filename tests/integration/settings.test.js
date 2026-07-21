@@ -42,19 +42,23 @@ describe('Settings', () => {
     });
 
     const error = await viewer.waitForEvent('error');
-    expect(error.message).toContain('Permission denied');
+    expect(error.message).toMatch(/admin access required/i);
   });
 
-  test('operator can save settings', async () => {
+  // save_settings is ADMIN-only. Every other source agrees: main.cpp lists it
+  // under needsAdmin, the mock server checks role !== 'admin', API.md says
+  // "Permission: ADMIN only", and every settings card in index.html carries
+  // .admin-only. This test previously asserted the opposite and had been
+  // failing against both implementations.
+  test('operator cannot save settings', async () => {
     const operator = await createAuthenticatedClient('operator1', 'pass123');
     operator.send({
       action: 'save_settings',
       settings: { gameDuration: 600000, numRounds: 4, sirenLength: 1000, sirenPause: 1000 }
     });
 
-    const settingsMsg = await operator.waitForEvent('settings');
-    expect(settingsMsg.settings.gameDuration).toBe(600000);
-    expect(settingsMsg.settings.numRounds).toBe(4);
+    const error = await operator.waitForEvent('error');
+    expect(error.message).toMatch(/admin access required/i);
     operator.close();
   });
 
