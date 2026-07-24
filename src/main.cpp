@@ -616,7 +616,15 @@ void loop() {
     }
 
     events(); // ezTime
-    ArduinoOTA.handle();
+    // Mid-session guard: don't service OTA while the timer is actively counting,
+    // so an update can't silently interrupt a live round (and, for a manually
+    // started game, lose it entirely — manual timer state isn't persisted).
+    // Pausing opens the window: a paused Hello Club booking still auto-recovers
+    // after the reboot because pause, unlike reset, leaves boot recovery armed.
+    // We just skip handle(), so an espota attempt goes unanswered and times out.
+    if (ENABLE_OTA && timer.getState() != RUNNING) {
+        ArduinoOTA.handle();
+    }
     ws.cleanupClients(MAX_WEBSOCKET_CLIENTS);  // default is the library's 8, not our limit
 
     checkAndBroadcastNTPStatus();
@@ -1803,7 +1811,10 @@ void setupOTA() {
         type = "filesystem";
       DEBUG_PRINTLN("Start updating " + type);
 
-      // Stop siren and pause timer before flashing to prevent siren stuck on
+      // Stop siren and pause timer before flashing to prevent siren stuck on.
+      // The loop's mid-session guard means we normally only reach here when the
+      // timer isn't RUNNING; the pause below is belt-and-suspenders in case that
+      // guard is ever relaxed.
       siren.stop();
       if (timer.getState() == RUNNING) {
           timer.pause();
